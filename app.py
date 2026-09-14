@@ -281,7 +281,13 @@ elif st.session_state.current_tab == "إدارة الصيانة":
     selected_date = st.date_input("اختر التاريخ المراد إدارته:", datetime.date.today())
     date_str = str(selected_date)
     
-    action_type = st.radio("حدد نوع الإجراء المطلوبة:", ["تعديل / حذف سجل سيارة واحدة فقط", "حذف كافة بيانات اليوم المحدد بالكامل ⚠️"])
+    action_type = st.radio(
+        "حدد نوع الإجراء المطلوب:", 
+        (
+            "تعديل أو حذف سجل سيارة محددة فقط", 
+            "حذف كافة بيانات اليوم المحدد بالكامل ⚠️"
+        )
+    )
     
     if action_type == "تعديل / حذف سجل سيارة واحدة فقط":
         target_car = st.text_input("أدخل رقم السيارة المراد مسح سجلها لهذا اليوم:")
