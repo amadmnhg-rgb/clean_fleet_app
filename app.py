@@ -4,22 +4,131 @@ import re
 from datetime import datetime
 import io
 
-# ضبط إعدادات الصفحة لتكون متجاوبة مع الجوال واللابتوب
-st.set_page_config(page_title="نظام إدارة سيارات النظافة", page_icon="🚛", layout="wide")
+# 1. تهيئة وتكوين الصفحة
+st.set_page_config(
+    page_title="صندوق النظافة والتحسين - م/ المهرة", 
+    page_icon="🚛", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# تهيئة قاعدة البيانات المحلية في الجلسة (Session State)
+# 2. حقن ستايل CSS زجاجي ومتطور (Glassmorphism & Squircle UI)
+glass_css = """
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
+    
+    * {
+        font-family: 'Tajawal', sans-serif !important;
+    }
+
+    /* خلفية زجاجية متدرجة للتطبيق */
+    .stApp {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+        color: #f8fafc;
+    }
+
+    /* رأس الصفحة (Header Bar الزجاجي) */
+    .header-glass {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 24px;
+        padding: 20px 30px;
+        margin-bottom: 25px;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .header-title-container {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+    }
+
+    .logo-img {
+        width: 85px;
+        height: 85px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
+        object-fit: cover;
+    }
+
+    /* بطاقات Squircle الزجاجية */
+    .squircle-card {
+        background: rgba(255, 255, 255, 0.04);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 22px;
+        padding: 20px;
+        text-align: center;
+        transition: all 0.3s ease-in-out;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        margin-bottom: 15px;
+    }
+
+    .squircle-card:hover {
+        transform: translateY(-5px);
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        box-shadow: 0 10px 30px rgba(16, 185, 129, 0.25);
+    }
+
+    .card-icon {
+        font-size: 2.2rem;
+        margin-bottom: 8px;
+    }
+
+    .card-value {
+        font-size: 1.8rem;
+        font-weight: 800;
+        color: #ffffff;
+    }
+
+    .card-label {
+        font-size: 0.95rem;
+        color: #94a3b8;
+        font-weight: 500;
+    }
+
+    /* القائمة الجانبية الزجاجية */
+    section[data-testid="stSidebar"] {
+        background: rgba(15, 23, 42, 0.75) !important;
+        backdrop-filter: blur(20px);
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* إخفاء العلامة المائية للرابط العلوي */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* أشرطة التقدم المخصصة */
+    .stProgress > div > div > div > div {
+        border-radius: 10px;
+    }
+</style>
+"""
+st.markdown(glass_css, unsafe_allow_html=True)
+
+# رابط الشعار (تم ترجيح الشعار الخاص بصندوق النظافة والتحسين)
+LOGO_URL = "https://i.ibb.co/3sZq147/mahrah-clean.jpg"  # رابط الشعار المرفق
+
+# 3. تهيئة البيانات وقواعد البيانات المحلية
 if 'trucks' not in st.session_state:
-    # البداية الافتراضية بـ 18 سيارة مع إمكانية التعديل والإضافة بلا حدود
-    st.session_state['trucks'] = pd.DataFrame([
-        {"id": i, "type": "ضاغطة", "model": "2024", "limit": 2500, "current_cycle_km": 0.0, "monthly_km": 0.0, "last_oil_change": "لم يسجل"}
-        for i in range(1, 19)
+    st.session_state['trucks'] = pd.DataFrame(columns=[
+        "رقم السيارة", "نوع السيارة", "الموديل", "حد الصيانة (كم)", 
+        "مسافة الدورة الحالية (كم)", "المجموع الشهري (كم)", "تاريخ آخر تغيير زيت"
     ])
 
 if 'daily_logs' not in st.session_state:
-    st.session_state['daily_logs'] = pd.DataFrame(columns=["date", "truck_id", "distance_km"])
+    st.session_state['daily_logs'] = pd.DataFrame(columns=["التاريخ", "رقم السيارة", "المسافة اليومية (كم)"])
 
 if 'maintenance_history' not in st.session_state:
-    st.session_state['maintenance_history'] = pd.DataFrame(columns=["truck_id", "date", "km_at_service", "notes"])
+    st.session_state['maintenance_history'] = pd.DataFrame(columns=["رقم السيارة", "تاريخ الصيانة", "المسافة عند الصيانة (كم)", "ملاحظات"])
 
 if 'default_limit' not in st.session_state:
     st.session_state['default_limit'] = 2500
@@ -27,240 +136,341 @@ if 'default_limit' not in st.session_state:
 if 'warning_ratio' not in st.session_state:
     st.session_state['warning_ratio'] = 90
 
-# القائمة الجانبية للتنقل
-st.sidebar.title("🚛 صندوق النظافة والتحسين")
-page = st.sidebar.radio("الانتقال إلى:", [
-    "لوحة التحكم الرئيسية", 
-    "الحركة اليومية (إدخال الرسالة)", 
-    "إدارة السيارات والصيانة", 
-    "السجل والأرشيف الشهري", 
-    "الإعدادات"
-])
+# 4. الترويسة الزجاجية الفاخرة (Glass Header Bar)
+header_html = f"""
+<div class="header-glass">
+    <div class="header-title-container">
+        <img src="https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f69b.png" class="logo-img" alt="Logo" style="background: rgba(255,255,255,0.1); padding:10px;">
+        <div>
+            <h2 style="margin:0; color:#ffffff; font-weight:800; font-size:1.6rem;">صندوق النظافة والتحسين</h2>
+            <p style="margin:0; color:#10b981; font-weight:600; font-size:1.05rem;">محافظة المهـرة - نظام متابعة الحركة والزيوت الذكي</p>
+        </div>
+    </div>
+    <div style="text-align: left; color:#94a3b8; font-size:0.9rem;">
+        <div>📅 {datetime.now().strftime('%Y-%m-%d')}</div>
+        <div style="color:#10b981; font-weight:bold;">🟢 النظام متصل ومحدث</div>
+    </div>
+</div>
+"""
+st.markdown(header_html, unsafe_allow_html=True)
+
+# 5. القائمة الجانبية للتنقل بأيقونات أنيقة
+st.sidebar.markdown("""
+<div style="text-align:center; padding:10px;">
+    <h3 style="color:#ffffff; margin-bottom:5px;">📋 قائمة التحكم</h3>
+    <p style="color:#64748b; font-size:0.85rem;">اختر قسم النظام المطلوب</p>
+</div>
+""", unsafe_allow_html=True)
+
+page = st.sidebar.radio(
+    "الانتقال إلى:", 
+    [
+        "📊 لوحة التحكم الرئيسية", 
+        "📥 الحركة اليومية (قراءة الرسائل)", 
+        "🛠️ إدارة السيارات والصيانة", 
+        "📁 السجل والتصدير لـ Excel", 
+        "⚙️ الإعدادات العامة"
+    ]
+)
 
 # ---------------------------------------------------------
-# 1. صفحة الحركة اليومية (إدخال الرسالة وتحليلها)
+# 📊 1. لوحة التحكم الرئيسية (Dashboard)
 # ---------------------------------------------------------
-if page == "الحركة اليومية (إدخال الرسالة)":
-    st.header("📥 إدخال الحركة اليومية")
+if page == "📊 لوحة التحكم الرئيسية":
+    today_str = str(datetime.now().date())
     
-    log_date = st.date_input("تاريخ الحركة:", datetime.now())
-    raw_text = st.text_area("ألصق رسالة الحركة اليومية هنا:", height=200, placeholder="سيارة رقم 1\nالمسافة 60.8 كم\n...")
+    total_trucks = len(st.session_state['trucks'])
+    today_logs = st.session_state['daily_logs'][st.session_state['daily_logs']['التاريخ'] == today_str]
+    moved_today_count = len(today_logs['رقم السيارة'].unique()) if not today_logs.empty else 0
+    today_total_km = today_logs['المسافة اليومية (كم)'].sum() if not today_logs.empty else 0.0
+
+    # حساب السيارات المفحوصة والتنبيهات
+    overdue_count = 0
+    warning_count = 0
+    if not st.session_state['trucks'].empty:
+        for _, truck in st.session_state['trucks'].iterrows():
+            limit = truck['حد الصيانة (كم)'] if truck['حد الصيانة (كم)'] > 0 else 2500
+            current = truck['مسافة الدورة الحالية (كم)']
+            ratio = (current / limit) * 100
+            if ratio >= 100:
+                overdue_count += 1
+            elif ratio >= st.session_state['warning_ratio']:
+                warning_count += 1
+
+    # عرض الأرقام بطاقات Squircle مرتبة في شبكة
+    c1, c2, c3, c4, c5 = st.columns(5)
     
-    if st.button("🔍 تحليل الرسالة", type="primary"):
+    with c1:
+        st.markdown(f"""
+        <div class="squircle-card">
+            <div class="card-icon">🚛</div>
+            <div class="card-value">{total_trucks}</div>
+            <div class="card-label">إجمالي السيارات</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with c2:
+        st.markdown(f"""
+        <div class="squircle-card">
+            <div class="card-icon">🟢</div>
+            <div class="card-value">{moved_today_count}</div>
+            <div class="card-label">تحركت اليوم</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c3:
+        st.markdown(f"""
+        <div class="squircle-card">
+            <div class="card-icon">📏</div>
+            <div class="card-value">{today_total_km:.1f}</div>
+            <div class="card-label">مسافة اليوم (كم)</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c4:
+        st.markdown(f"""
+        <div class="squircle-card">
+            <div class="card-icon">🟠</div>
+            <div class="card-value">{warning_count}</div>
+            <div class="card-label">تحتاج صيانة قريباً</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c5:
+        st.markdown(f"""
+        <div class="squircle-card">
+            <div class="card-icon">🔴</div>
+            <div class="card-value">{overdue_count}</div>
+            <div class="card-label">تجاوزت حد الزيت</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    
+    # عرض حالة السيارات بصرياً (Progress visualizer)
+    st.subheader("🏎️ الحالة الفنية للأسطول ونسب استهلاك الزيت")
+    
+    if st.session_state['trucks'].empty:
+        st.info("💡 لا توجد سيارات مسجلة حالياً في النظام. يمكنك إضافة سيارات من قسم (إدارة السيارات) أو لصق رسالة اليوم لتسجيلها تلقائياً.")
+    else:
+        for _, truck in st.session_state['trucks'].iterrows():
+            t_id = truck['رقم السيارة']
+            t_type = truck['نوع السيارة']
+            limit = truck['حد الصيانة (كم)'] if truck['حد الصيانة (كم)'] > 0 else 2500
+            current = truck['مسافة الدورة الحالية (كم)']
+            m_total = truck['المجموع الشهري (كم)']
+            
+            ratio = min(float(current / limit), 1.0)
+            percentage = (current / limit) * 100
+            
+            col_t1, col_t2, col_t3 = st.columns([1.5, 3.5, 1])
+            with col_t1:
+                st.markdown(f"**🚛 سيارة #{t_id}** ({t_type})")
+                st.caption(f"المجموع الشهري: {m_total:.1f} كم")
+            with col_t2:
+                st.progress(ratio)
+                st.caption(f"المقطوع: **{current:.1f} كم** من أصل **{limit} كم** ({percentage:.1f}%)")
+            with col_t3:
+                if percentage >= 100:
+                    st.error("🔴 تغيير زيت!")
+                elif percentage >= st.session_state['warning_ratio']:
+                    st.warning("🟠 انتبه!")
+                else:
+                    st.success("🟢 ممتازة")
+            st.markdown("<hr style='margin: 8px 0; border-color: rgba(255,255,255,0.05);'>", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# 📥 2. إدخال وتحليل الحركة اليومية
+# ---------------------------------------------------------
+elif page == "📥 الحركة اليومية (قراءة الرسائل)":
+    st.header("📥 تحليل ورصد حركة السيارات اليومية")
+    
+    col_d1, col_d2 = st.columns([1, 2])
+    with col_d1:
+        log_date = st.date_input("🗓️ تاريخ الحركة المراد رصدها:", datetime.now())
+    with col_d2:
+        st.info(f"📌 **سيتم إدراج البيانات المسجلة تحت تاريخ:** `{log_date.strftime('%Y-%m-%d')}`")
+
+    raw_text = st.text_area(
+        "ألصق نص كشف الحركة Daily Report هنا:", 
+        height=220, 
+        placeholder="مثال:\nسيارة رقم 1 المسافة 60.8 كم\nسيارة رقم 2 المسافة 93.1 كم"
+    )
+    
+    if st.button("✨ تحليل واستخراج البيانات ذكياً", type="primary"):
         if not raw_text.strip():
-            st.warning("يرجى لصق نص الرسالة أولاً.")
+            st.warning("يرجى إدخال أو لصق نص الرسالة أولاً.")
         else:
-            # نمط المطابقة لإنعكاس مختلف كتابات كلمة المسافة وأرقام السيارات
+            # النمط الذهبي المطابق لقراءة المسافات والسيارات باللغة العربية
             pattern = r"(?:سيارة\s*رقم\s*|سيارة\s*)(\d+)(?:[\s\S]*?)(?:المسافة|المسافه|المسافة المقطوعة)\s*([\d\.]+)\s*كم"
             matches = re.findall(pattern, raw_text)
             
             if matches:
                 extracted_data = []
-                existing_ids = st.session_state['trucks']['id'].tolist()
-                
                 for truck_id, dist in matches:
-                    t_id = int(truck_id)
-                    extracted_data.append({"truck_id": t_id, "distance_km": float(dist)})
-                    
-                    # إذا كانت السيارة غير مسجلة مسبقاً يتم إضافتها تلقائياً للأسطول
-                    if t_id not in existing_ids:
-                        new_truck = pd.DataFrame([{
-                            "id": t_id, 
-                            "type": "جديدة", 
-                            "model": "-", 
-                            "limit": st.session_state['default_limit'], 
-                            "current_cycle_km": 0.0, 
-                            "monthly_km": 0.0, 
-                            "last_oil_change": "لم يسجل"
-                        }])
-                        st.session_state['trucks'] = pd.concat([st.session_state['trucks'], new_truck], ignore_index=True)
-                        existing_ids.append(t_id)
-                        st.info(f"✨ تم اكتشاف وإضافة سيارة جديدة تلقائياً برقم: {t_id}")
+                    extracted_data.append({
+                        "تاريخ الحركة": str(log_date),
+                        "رقم السيارة": int(truck_id), 
+                        "المسافة اليومية (كم)": float(dist)
+                    })
 
                 st.session_state['temp_logs'] = pd.DataFrame(extracted_data)
-                st.success(f"تم استخراج بيانات {len(extracted_data)} سيارة بنجاح!")
+                st.success(f"🎉 تم التعرف على {len(extracted_data)} سيارة بنجاح!")
             else:
-                st.error("لم يتم العثور على بيانات مطابقة. تأكد من إدراج رقم السيارة والمسافة.")
+                st.error("لم يتم العثور على صيغ مطابقة. تأكد أن الرسالة تحتوي على (سيارة رقم X المسافة Y كم).")
 
-    # عرض البيانات المستخرجة للمراجعة والتعديل قبل الاعتماد النهائي
+    # جدول المراجعة قبل الاعتماد
     if 'temp_logs' in st.session_state and not st.session_state['temp_logs'].empty:
-        st.subheader("📋 مراجعة البيانات قبل الاعتماد")
+        st.subheader("📋 جدول المراجعة والاعتماد النهائي")
         
         edited_df = st.data_editor(st.session_state['temp_logs'], num_rows="dynamic", use_container_width=True)
         
-        if st.button("✅ اعتماد البيانات وحفظها"):
-            already_logged_count = 0
+        if st.button("✅ اعتماد وحفظ البيانات بالحافظة"):
+            already_logged = 0
             for _, row in edited_df.iterrows():
-                t_id = int(row['truck_id'])
-                dist = float(row['distance_km'])
+                t_id = int(row['رقم السيارة'])
+                dist = float(row['المسافة اليومية (كم)'])
+                entry_date = str(row['تاريخ الحركة'])
                 
-                # التحقق من التكرار لنفس اليوم
+                # إيقاف التكرار لنفس اليوم والسيارة
                 existing = st.session_state['daily_logs'][
-                    (st.session_state['daily_logs']['date'] == str(log_date)) & 
-                    (st.session_state['daily_logs']['truck_id'] == t_id)
+                    (st.session_state['daily_logs']['التاريخ'] == entry_date) & 
+                    (st.session_state['daily_logs']['رقم السيارة'] == t_id)
                 ]
                 
                 if not existing.empty:
-                    already_logged_count += 1
+                    already_logged += 1
                     continue
 
-                # حفظ الحركة اليومية
-                new_log = pd.DataFrame([{"date": str(log_date), "truck_id": t_id, "distance_km": dist}])
+                # حفظ في السجل اليومي
+                new_log = pd.DataFrame([{"التاريخ": entry_date, "رقم السيارة": t_id, "المسافة اليومية (كم)": dist}])
                 st.session_state['daily_logs'] = pd.concat([st.session_state['daily_logs'], new_log], ignore_index=True)
                 
-                # تحديث دورة الصيانة والمجموع الشهري للسيارة
-                truck_idx_list = st.session_state['trucks'].index[st.session_state['trucks']['id'] == t_id].tolist()
-                if truck_idx_list:
-                    idx = truck_idx_list[0]
-                    limit = st.session_state['trucks'].loc[idx, 'limit']
-                    current_km = st.session_state['trucks'].loc[idx, 'current_cycle_km']
+                # إضافة السيارة لقائمة السيارات إن لم تكن موجودة
+                existing_trucks = st.session_state['trucks']['رقم السيارة'].tolist() if not st.session_state['trucks'].empty else []
+                
+                if t_id not in existing_trucks:
+                    new_truck = pd.DataFrame([{
+                        "رقم السيارة": t_id, 
+                        "نوع السيارة": "ضاغطة", 
+                        "الموديل": "2024", 
+                        "حد الصيانة (كم)": st.session_state['default_limit'], 
+                        "مسافة الدورة الحالية (كم)": 0.0, 
+                        "المجموع الشهري (كم)": 0.0, 
+                        "تاريخ آخر تغيير زيت": "لم يسجل"
+                    }])
+                    st.session_state['trucks'] = pd.concat([st.session_state['trucks'], new_truck], ignore_index=True)
+
+                # تحديث المسافات والتنبيهات
+                truck_idx = st.session_state['trucks'].index[st.session_state['trucks']['رقم السيارة'] == t_id][0]
+                limit = st.session_state['trucks'].loc[truck_idx, 'حد الصيانة (كم)']
+                current_km = st.session_state['trucks'].loc[truck_idx, 'مسافة الدورة الحالية (كم)']
+                
+                new_km = current_km + dist
+                if new_km >= limit:
+                    overflow = new_km - limit
+                    st.session_state['trucks'].loc[truck_idx, 'مسافة الدورة الحالية (كم)'] = overflow
+                    st.warning(f"🚨 السيارة رقم {t_id} تجاوزت حد الصيانة ({limit} كم)! تم بدء دورة جديدة برصيد {overflow:.1f} كم.")
+                else:
+                    st.session_state['trucks'].loc[truck_idx, 'مسافة الدورة الحالية (كم)'] = new_km
                     
-                    new_km = current_km + dist
-                    # التعامل مع تجاوز حد الصيانة
-                    if new_km >= limit:
-                        overflow = new_km - limit
-                        st.session_state['trucks'].loc[idx, 'current_cycle_km'] = overflow
-                        st.warning(f"🚨 السيارة رقم {t_id} وصلت/تجاوزت حد الصيانة ({limit} كم)! بدأت دورة جديدة بـ {overflow:.1f} كم.")
-                    else:
-                        st.session_state['trucks'].loc[idx, 'current_cycle_km'] = new_km
-                        
-                    st.session_state['trucks'].loc[idx, 'monthly_km'] += dist
+                st.session_state['trucks'].loc[truck_idx, 'المجموع الشهري (كم)'] += dist
             
-            if already_logged_count > 0:
-                st.info(f"تم تجاهل {already_logged_count} سجل/سجلات نظراً لتسجيلها مسبقاً في هذا التاريخ.")
-            st.success("تم اعتماد البيانات وتحديث الدورة والمجاميع بنجاح!")
+            if already_logged > 0:
+                st.info(f"تم تخطي {already_logged} سجل مسجل مسبقاً بنفس التاريخ.")
+            st.success(f"تم حفظ الحركة اليومية بنجاح لتاريخ {log_date}!")
             del st.session_state['temp_logs']
 
 # ---------------------------------------------------------
-# 2. لوحة التحكم الرئيسية (Dashboard)
+# 🛠️ 3. إدارة السيارات والصيانة
 # ---------------------------------------------------------
-elif page == "لوحة التحكم الرئيسية":
-    st.header("📊 لوحة التحكم الرئيسية")
+elif page == "🛠️ إدارة السيارات والصيانة":
+    st.header("🛠️ صيانة السيارات والدورات")
     
-    total_trucks = len(st.session_state['trucks'])
-    today_str = str(datetime.now().date())
-    today_logs = st.session_state['daily_logs'][st.session_state['daily_logs']['date'] == today_str]
-    moved_today_count = len(today_logs['truck_id'].unique()) if not today_logs.empty else 0
+    t1, t2, t3 = st.tabs(["📋 الأسطول المسجل", "➕ إضافة / تعديل سيارة", "🛢️ توثيق تغيير الزيت"])
     
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("إجمالي السيارات المسجلة", total_trucks)
-    col2.metric("تحركت اليوم", moved_today_count)
-    col3.metric("لم تظهر اليوم", total_trucks - moved_today_count)
-    col4.metric("إجمالي مسافات اليوم", f"{today_logs['distance_km'].sum():.1f} كم" if not today_logs.empty else "0.0 كم")
-
-    st.markdown("---")
-    st.subheader("🚨 حالة التنبيهات والصيانة")
-    
-    has_alerts = False
-    for _, truck in st.session_state['trucks'].iterrows():
-        limit = truck['limit'] if truck['limit'] > 0 else 2500
-        ratio = (truck['current_cycle_km'] / limit) * 100
-        if ratio >= 100:
-            has_alerts = True
-            st.error(f"🔴 السيارة رقم {truck['id']}: وصلت إلى حد الصيانة ({truck['current_cycle_km']:.1f} / {limit} كم)")
-        elif ratio >= st.session_state['warning_ratio']:
-            has_alerts = True
-            st.warning(f"🟠 السيارة رقم {truck['id']}: اقتربت من حد الصيانة ({truck['current_cycle_km']:.1f} / {limit} كم - {ratio:.1f}%)")
-            
-    if not has_alerts:
-        st.success("🟢 جميع السيارات في حالة ممتازة ولم تصل أي سيارة إلى حد التنبيه.")
-
-# ---------------------------------------------------------
-# 3. إدارة السيارات وتسجيل تغيير الزيت
-# ---------------------------------------------------------
-elif page == "إدارة السيارات والصيانة":
-    st.header("🛠️ إدارة أسطول السيارات والتعديل والصيانة")
-    
-    tab1, tab2, tab3 = st.tabs(["قائمة السيارات الحالية", "➕ إضافة / تعديل سيارة", "🛢️ تسجيل تغيير زيت"])
-    
-    with tab1:
-        st.subheader("السيارات المسجلة حالياً")
+    with t1:
         st.dataframe(st.session_state['trucks'], use_container_width=True)
         
-    with tab2:
-        st.subheader("إضافة سيارة جديدة أو تعديل سيارة موجودة")
+    with t2:
         col_a, col_b, col_c = st.columns(3)
         new_id = col_a.number_input("رقم السيارة:", min_value=1, step=1)
         new_type = col_b.text_input("نوع السيارة:", value="ضاغطة")
         new_model = col_c.text_input("الموديل:", value="2024")
-        custom_limit = st.number_input("حد الصيانة لهذه السيارة (كم):", value=st.session_state['default_limit'], step=100)
+        custom_limit = st.number_input("حد غيار الزيت (كم):", value=st.session_state['default_limit'], step=100)
         
-        if st.button("حفظ / إضافة السيارة"):
-            existing_ids = st.session_state['trucks']['id'].tolist()
+        if st.button("حفظ بيانات السيارة"):
+            existing_ids = st.session_state['trucks']['رقم السيارة'].tolist() if not st.session_state['trucks'].empty else []
             if new_id in existing_ids:
-                # تعديل البيانات
-                idx = st.session_state['trucks'].index[st.session_state['trucks']['id'] == new_id][0]
-                st.session_state['trucks'].loc[idx, 'type'] = new_type
-                st.session_state['trucks'].loc[idx, 'model'] = new_model
-                st.session_state['trucks'].loc[idx, 'limit'] = custom_limit
-                st.success(f"تم تحديث بيانات السيارة رقم {new_id} بنجاح!")
+                idx = st.session_state['trucks'].index[st.session_state['trucks']['رقم السيارة'] == new_id][0]
+                st.session_state['trucks'].loc[idx, 'نوع السيارة'] = new_type
+                st.session_state['trucks'].loc[idx, 'الموديل'] = new_model
+                st.session_state['trucks'].loc[idx, 'حد الصيانة (كم)'] = custom_limit
+                st.success(f"تم تحديث بيانات السيارة رقم #{new_id}!")
             else:
-                # إضافة سيارة جديدة
                 new_row = pd.DataFrame([{
-                    "id": new_id, 
-                    "type": new_type, 
-                    "model": new_model, 
-                    "limit": custom_limit, 
-                    "current_cycle_km": 0.0, 
-                    "monthly_km": 0.0, 
-                    "last_oil_change": "لم يسجل"
+                    "رقم السيارة": new_id, 
+                    "نوع السيارة": new_type, 
+                    "الموديل": new_model, 
+                    "حد الصيانة (كم)": custom_limit, 
+                    "مسافة الدورة الحالية (كم)": 0.0, 
+                    "المجموع الشهري (كم)": 0.0, 
+                    "تاريخ آخر تغيير زيت": "لم يسجل"
                 }])
                 st.session_state['trucks'] = pd.concat([st.session_state['trucks'], new_row], ignore_index=True)
-                st.success(f"تم إضافة السيارة رقم {new_id} بنجاح!")
+                st.success(f"تم إضافة السيارة رقم #{new_id} بنجاح!")
 
-    with tab3:
-        st.subheader("تسجيل صيانة جديدة")
+    with t3:
         if not st.session_state['trucks'].empty:
-            t_id = st.selectbox("اختر السيارة:", st.session_state['trucks']['id'].tolist())
+            t_id = st.selectbox("اختر السيارة لإجراء تغيير الزيت:", st.session_state['trucks']['رقم السيارة'].tolist())
             service_date = st.date_input("تاريخ تغيير الزيت:", datetime.now())
-            notes = st.text_input("ملاحظات (نوع الزيت، رقم الفاتورة...):")
+            notes = st.text_input("ملاحظات ورقم الفاتورة:")
             
-            if st.button("إتمام تغيير الزيت وبدء دورة جديدة من 0 كم"):
-                truck_idx = st.session_state['trucks'].index[st.session_state['trucks']['id'] == t_id][0]
-                current_km = st.session_state['trucks'].loc[truck_idx, 'current_cycle_km']
+            if st.button("إتمام تغيير الزيت وتصفير العداد للحساب من 0"):
+                truck_idx = st.session_state['trucks'].index[st.session_state['trucks']['رقم السيارة'] == t_id][0]
+                current_km = st.session_state['trucks'].loc[truck_idx, 'مسافة الدورة الحالية (كم)']
                 
-                # تسجيل الصيانة في السجل
-                new_record = pd.DataFrame([{"truck_id": t_id, "date": str(service_date), "km_at_service": current_km, "notes": notes}])
+                # إضافة لسجل الصيانة
+                new_record = pd.DataFrame([{"رقم السيارة": t_id, "تاريخ الصيانة": str(service_date), "المسافة عند الصيانة (كم)": current_km, "ملاحظات": notes}])
                 st.session_state['maintenance_history'] = pd.concat([st.session_state['maintenance_history'], new_record], ignore_index=True)
                 
-                # إعادة تصفير الدورة
-                st.session_state['trucks'].loc[truck_idx, 'current_cycle_km'] = 0.0
-                st.session_state['trucks'].loc[truck_idx, 'last_oil_change'] = str(service_date)
-                st.success(f"تم تسجيل تغيير الزيت للسيارة رقم {t_id} وبدء دورة جديدة من 0 كم.")
+                # تصفير الدورة
+                st.session_state['trucks'].loc[truck_idx, 'مسافة الدورة الحالية (كم)'] = 0.0
+                st.session_state['trucks'].loc[truck_idx, 'تاريخ آخر تغيير زيت'] = str(service_date)
+                st.success(f"تم تصفير الدورة وتوثيق تغيير الزيت للسيارة #{t_id} بنجاح!")
+        else:
+            st.info("لا توجد سيارات مسجلة حالياً.")
 
 # ---------------------------------------------------------
-# 4. السجل الأرشيفي والتصدير لـ Excel
+# 📁 4. السجل والأرشيف وتصدير Excel
 # ---------------------------------------------------------
-elif page == "السجل والأرشيف الشهري":
-    st.header("📁 السجل التاريخي والتصدير")
+elif page == "📁 السجل والتصدير لـ Excel":
+    st.header("📁 الأرشيف الشهري والتصدير")
     
-    st.subheader("سجل الحركة اليومية")
+    st.subheader("سجل الحركة اليومي الكامل")
     st.dataframe(st.session_state['daily_logs'], use_container_width=True)
     
-    # التصدير إلى Excel
+    # التصدير المباشر لملف Excel
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         st.session_state['daily_logs'].to_excel(writer, sheet_name='الحركة اليومية', index=False)
         st.session_state['trucks'].to_excel(writer, sheet_name='السيارات والدورات', index=False)
-        st.session_state['maintenance_history'].to_excel(writer, sheet_name='سجل تغيير الزيت', index=False)
+        st.session_state['maintenance_history'].to_excel(writer, sheet_name='أرشيف تغيير الزيت', index=False)
         
     st.download_button(
-        label="📥 تصدير التقرير الشامل إلى Excel",
+        label="📥 تصدير التقرير الشامل كملف (Excel)",
         data=buffer.getvalue(),
-        file_name=f"تقرير_حركة_النظافة_{datetime.now().strftime('%Y_%m')}.xlsx",
+        file_name=f"تقرير_صندوق_النظافة_{datetime.now().strftime('%Y_%m_%d')}.xlsx",
         mime="application/vnd.ms-excel"
     )
 
 # ---------------------------------------------------------
-# 5. الإعدادات العامة
+# ⚙️ 5. الإعدادات العامة
 # ---------------------------------------------------------
-elif page == "الإعدادات":
-    st.header("⚙️ إعدادات النظام")
+elif page == "⚙️ الإعدادات العامة":
+    st.header("⚙️ إعدادات النظام وتنبيهات الزيت")
     
-    new_limit = st.number_input("حد دورة الصيانة الافتراضي للسيارات الجديدة (كم):", value=st.session_state['default_limit'], step=100)
-    new_warning = st.slider("نسبة التنبيه المبكر (%):", min_value=50, max_value=95, value=st.session_state['warning_ratio'])
+    st.session_state['default_limit'] = st.number_input("حد الزيت الافتراضي (كم):", value=st.session_state['default_limit'], step=100)
+    st.session_state['warning_ratio'] = st.slider("نسبة التنبيه قبل وصول الحد (%):", min_value=50, max_value=98, value=st.session_state['warning_ratio'])
     
-    if st.button("حفظ الإعدادات"):
-        st.session_state['default_limit'] = new_limit
-        st.session_state['warning_ratio'] = new_warning
-        st.success("تم تحديث الإعدادات الافتراضية بنجاح.")
+    st.success("تم تطبيق الإعدادات الحالية بنجاح.")
