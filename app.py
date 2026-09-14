@@ -1,76 +1,84 @@
 import streamlit as st
 import datetime
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+
+# استدعاء مكتبة الربط السحابي بأمان لمنع أي أخطاء ModuleNotFoundError
+try:
+    from streamlit_gsheets import GSheetsConnection
+except ImportError:
+    GSheetsConnection = None
 
 # ---------------------------------------------------------
-# 1. إعدادات الصفحة والتجاوب مع أجهزة الجوال واللابتوب
+# 1. إعدادات الصفحة والتجاوُب الشامل للجوال واللابتوب
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="متابعة شاحنات الصندوق",
+    page_title="صندوق النظافة والتحسين - المهرة",
     page_icon="🚛",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
 # ---------------------------------------------------------
-# 2. تصميم CSS مخصص لنظام iOS Glassmorphism وشريط التنقل السلس
+# 2. تصميم CSS المخصص (iOS Glassmorphism & Modern UI)
 # ---------------------------------------------------------
 st.markdown("""
 <style>
-    /* خلفية رئيسية مظلمة وأنيقة */
+    /* خلفية متناسقة ونصوص واضحة */
     .stApp {
-        background-color: #0d1117;
-        color: #e6edf3;
+        background-color: #0b0f19;
+        color: #f0f6fc;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     }
     
-    /* إخفاء القائمة الجانبية تماماً */
+    /* إخفاء الشريط الجانبي Sidebar تماماً */
     [data-testid="stSidebar"] {
         display: none;
     }
     
-    /* أيقونة 3D وشعار التطبيق */
+    /* الهيدر الرئيسي بأسلوب 3D الزجاجي */
     .app-header-container {
-        background: linear-gradient(135deg, rgba(20, 35, 25, 0.8), rgba(10, 20, 30, 0.9));
+        background: linear-gradient(135deg, rgba(16, 37, 26, 0.85), rgba(10, 22, 38, 0.95));
         border: 2px solid rgba(46, 204, 113, 0.4);
-        border-radius: 20px;
-        padding: 20px;
+        border-radius: 24px;
+        padding: 22px;
         text-align: center;
-        backdrop-filter: blur(15px);
-        box-shadow: 0 10px 30px rgba(0,255,127,0.15);
+        backdrop-filter: blur(20px);
+        box-shadow: 0 12px 35px rgba(0, 255, 127, 0.15);
         margin-bottom: 25px;
     }
     
     .app-title-yellow {
         color: #f1c40f;
-        font-size: 26px;
-        font-weight: bold;
-        text-shadow: 0 0 10px rgba(241, 196, 15, 0.5);
+        font-size: 28px;
+        font-weight: 900;
+        text-shadow: 0 0 12px rgba(241, 196, 15, 0.6);
+        margin-bottom: -5px;
     }
     
     .app-title-white {
         color: #ffffff;
-        font-size: 22px;
-        font-weight: bold;
-        text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        font-size: 23px;
+        font-weight: 800;
+        text-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
     }
     
-    /* بطاقات الإحصائيات الذكية */
+    /* بطاقات الإحصائيات التفاعلية */
     .stat-card {
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 16px;
-        padding: 15px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 18px;
+        padding: 18px;
         text-align: center;
-        backdrop-filter: blur(10px);
-        transition: transform 0.2s ease;
+        backdrop-filter: blur(12px);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        transition: all 0.3s ease;
     }
     .stat-card:hover {
-        transform: translateY(-3px);
+        border-color: rgba(46, 204, 113, 0.5);
+        transform: translateY(-4px);
     }
     
-    /* أزرار الحذف الخروج باللون الأحمر */
+    /* الأزرار الحمراء للتحذير والحذف */
     .danger-btn > button {
         background-color: #e74c3c !important;
         color: white !important;
@@ -78,12 +86,17 @@ st.markdown("""
         border: none !important;
         width: 100%;
         font-weight: bold;
+        padding: 10px;
+        box-shadow: 0 4px 15px rgba(231, 76, 60, 0.3);
+    }
+    .danger-btn > button:hover {
+        background-color: #c0392b !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 3. إدارة جلسة المستخدم (Session State)
+# 3. إدارة جلسة البيانات (Session State & Undo Buffer)
 # ---------------------------------------------------------
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -91,8 +104,14 @@ if 'user_email' not in st.session_state:
     st.session_state.user_email = ""
 if 'current_tab' not in st.session_state:
     st.session_state.current_tab = "لوحة التحكم"
-if 'data_history' not in st.session_state:
-    st.session_state.data_history = []  # لحفظ حركة التراجع
+if 'fleet_data' not in st.session_state:
+    # الجدول يبدأ فارغاً بدون أي إدخالات وهمية
+    st.session_state.fleet_data = pd.DataFrame(columns=[
+        "التاريخ", "رقم السيارة", "اسم السائق", "قراءة بداية اليوم", 
+        "قراءة نهاية اليوم", "المسافة المقطوعة (كم)", "عداد الزيت الحالي", "حد تغيير الزيت"
+    ])
+if 'undo_stack' not in st.session_state:
+    st.session_state.undo_stack = []
 
 # ---------------------------------------------------------
 # 4. شاشة تسجيل الدخول والمزامنة
@@ -100,26 +119,27 @@ if 'data_history' not in st.session_state:
 if not st.session_state.logged_in:
     st.markdown("""
         <div class="app-header-container">
-            <div class="app-title-yellow">صندوق النظافة</div>
-            <div class="app-title-white">والتحسين - محافظة المهـرة</div>
-            <p style="color: #2ecc71; margin-top: 8px;">نظام متابعة الحركة والزيوت الذكي</p>
+            <div style="font-size: 48px; margin-bottom: 5px;">🚛🐪🌴</div>
+            <div class="app-title-yellow">صندوق النظافة والتحسين</div>
+            <div class="app-title-white">محافظة المهـرة</div>
+            <p style="color: #2ecc71; margin-top: 8px; font-weight: 600;">نظام متابعة أسطول الشاحنات والزيوت الذكي</p>
         </div>
     """, unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.subheader("🔑 تسجيل الدخول للمزامنة")
-        email = st.text_input("البريد الإلكتروني:", placeholder="example@domain.com")
-        password = st.text_input("الرمز الخاص بالتطبيق:", type="password")
+        st.subheader("🔑 تسجيل الدخول ومزامنة البيانات")
+        email = st.text_input("البريد الإلكتروني للمستخدم:", placeholder="example@mahrah.gov")
+        password = st.text_input("كلمة المرور / الرمز الخاص:", type="password")
         
-        if st.button("تسجيل الدخول / مزامنة التقدّم", use_container_width=True):
+        if st.button("🚀 تسجيل الدخول وتفعيل المزامنة", use_container_width=True):
             if email and password:
                 st.session_state.logged_in = True
                 st.session_state.user_email = email
                 st.success("تم تسجيل الدخول ومزامنة البيانات بنجاح!")
                 st.rerun()
             else:
-                st.error("يرجى إدخال البريد الإلكتروني والرمز الخاص.")
+                st.error("يرجى إدخال البريد الإلكتروني ورمز المرور الصحيح.")
     st.stop()
 
 # ---------------------------------------------------------
@@ -127,156 +147,229 @@ if not st.session_state.logged_in:
 # ---------------------------------------------------------
 st.markdown("""
     <div class="app-header-container">
-        <div style="font-size: 40px; margin-bottom: 5px;">🚛🐪🌴</div>
-        <div class="app-title-yellow">صندوق النظافة</div>
-        <div class="app-title-white">والتحسين</div>
-        <p style="color: #3498db; font-weight: bold; margin-top: 5px;">متابعة شاحنات الصندوق</p>
+        <div style="font-size: 42px; margin-bottom: 5px;">🚛🐪🌴</div>
+        <div class="app-title-yellow">صندوق النظافة والتحسين</div>
+        <div class="app-title-white">محافظة المهـرة</div>
+        <p style="color: #3498db; font-weight: bold; margin-top: 5px;">برنامج متابعة الحركة والزيوت والأسطول</p>
     </div>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 6. شريط التنقل السلس بأسلوب iOS (بديل الشريط الجانبي)
+# 6. شريط التنقل السلس المخصص (iOS Navigation Bar)
 # ---------------------------------------------------------
 tabs = ["📊 لوحة التحكم", "📝 الحركة اليومية", "🛠️ إدارة الصيانة", "📥 التصدير", "⚙️ الإعدادات"]
-selected_tab = st.radio("", tabs, horizontal=True, index=tabs.index(f"📊 {st.session_state.current_tab}") if f"📊 {st.session_state.current_tab}" in tabs else 0)
+selected_tab = st.radio("", tabs, horizontal=True)
 
-# تحديث التبويب الحالي
-st.session_state.current_tab = selected_tab.split(" ")[1]
+# مزامنة التبويب النشط
+if "لوحة" in selected_tab:
+    st.session_state.current_tab = "لوحة التحكم"
+elif "الحركة" in selected_tab:
+    st.session_state.current_tab = "الحركة اليومية"
+elif "إدارة" in selected_tab:
+    st.session_state.current_tab = "إدارة الصيانة"
+elif "التصدير" in selected_tab:
+    st.session_state.current_tab = "التصدير"
+elif "الإعدادات" in selected_tab:
+    st.session_state.current_tab = "الإعدادات"
 
 st.markdown("---")
 
 # ---------------------------------------------------------
-# 7. محتوى التبويبات
+# 7. محتوى الأقسام الكامل
 # ---------------------------------------------------------
 
-# 🟢 التبويب 1: لوحة التحكم الرئيسية
-if st.session_state.current_tab == "لوحة":
-    st.subheader("📌 الحالة الفنية للأسطول ونسب الاستهلاك")
+# 🟢 1. لوحة التحكم والتحليلات المباشرة
+if st.session_state.current_tab == "لوحة التحكم":
+    st.subheader("📌 الحالة الفنية المباشرة ونسب استهلاك الزيوت")
     
+    df = st.session_state.fleet_data
+    
+    # حساب الإحصائيات التلقائية
+    total_cars = len(df['رقم السيارة'].unique()) if not df.empty else 0
+    today_str = str(datetime.date.today())
+    today_df = df[df['التاريخ'] == today_str] if not df.empty else pd.DataFrame()
+    
+    cars_moved_today = len(today_df['رقم السيارة'].unique()) if not today_df.empty else 0
+    total_km_today = today_df['المسافة المقطوعة (كم)'].sum() if not today_df.empty else 0.0
+    
+    # استخراج تنبيهات الزيت
+    oil_exceeded = 0
+    oil_warning = 0
+    if not df.empty:
+        for idx, row in df.iterrows():
+            rem = row['حد تغيير الزيت'] - row['عداد الزيت الحالي']
+            if rem <= 0:
+                oil_exceeded += 1
+            elif rem <= 500:
+                oil_warning += 1
+
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        st.markdown('<div class="stat-card"><h3 style="color:#e74c3c">0</h3><p>تجاوزت حد الزيت</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><h3 style="color:#e74c3c">{oil_exceeded}</h3><p>تجاوزت حد الزيت ⚠️</p></div>', unsafe_allow_html=True)
     with col2:
-        st.markdown('<div class="stat-card"><h3 style="color:#f39c12">0</h3><p>تحتاج صيانة قريباً</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><h3 style="color:#f39c12">{oil_warning}</h3><p>تحتاج صيانة قريباً 🛠️</p></div>', unsafe_allow_html=True)
     with col3:
-        st.markdown('<div class="stat-card"><h3 style="color:#3498db">0.0</h3><p>مسافة اليوم (كم)</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><h3 style="color:#3498db">{total_km_today:.1f}</h3><p>مسافة اليوم (كم) 🛣️</p></div>', unsafe_allow_html=True)
     with col4:
-        st.markdown('<div class="stat-card"><h3 style="color:#2ecc71">0</h3><p>تحركت اليوم</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><h3 style="color:#2ecc71">{cars_moved_today}</h3><p>تحركت اليوم 🚛</p></div>', unsafe_allow_html=True)
     with col5:
-        st.markdown('<div class="stat-card"><h3 style="color:#9b59b6">0</h3><p>إجمالي السيارات</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><h3 style="color:#9b59b6">{total_cars}</h3><p>إجمالي السيارات 🚚</p></div>', unsafe_allow_html=True)
 
-    st.info("💡 لا توجد بيانات وهمية. تبدأ الجداول فارغة حتى يتم إدخال البيانات يدوياً أو استخراجها.")
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("📋 جدول السجلات والزيوت النشط")
+    if df.empty:
+        st.info("💡 لا توجد بيانات مدخلة حتى الآن. يبدأ الجدول فارغاً حتى تقوم بإدخال الحركة من تبويب 'الحركة اليومية'.")
+    else:
+        st.dataframe(df, use_container_width=True)
 
-# 🟢 التبويب 2: الحركة اليومية وإدخال الكيلومترات
-elif st.session_state.current_tab == "الحركة":
-    st.subheader("📝 تسجيل الحركة اليومية والكيلومترات")
+# 🟢 2. تسجيل الحركة اليومية وزر التراجع (Undo)
+elif st.session_state.current_tab == "الحركة اليومية":
+    st.subheader("📝 تسجيل الحركة اليومية للأسطول والكيلومترات")
     
-    col_input1, col_input2 = st.columns(2)
-    with col_input1:
-        car_number = st.text_input("رقم السيارة / الشاحنة:")
-        km_start = st.number_input("قراءة الكيلومتر بداية اليوم:", min_value=0.0)
-    with col_input2:
-        driver_name = st.text_input("اسم السائق:")
-        km_end = st.number_input("قراءة الكيلومتر نهاية اليوم:", min_value=0.0)
+    with st.form("daily_entry_form", clear_on_submit=True):
+        col_in1, col_in2 = st.columns(2)
+        with col_in1:
+            car_no = st.text_input("رقم السيارة / الشاحنة:")
+            driver = st.text_input("اسم السائق المسؤول:")
+            km_start = st.number_input("قراءة الكيلومتر (بداية اليوم):", min_value=0.0, step=1.0)
+        with col_in2:
+            entry_date = st.date_input("تاريخ الحركة:", datetime.date.today())
+            oil_limit = st.number_input("حد تغيير الزيت المعتمد (كم):", min_value=1000.0, value=5000.0, step=500.0)
+            km_end = st.number_input("قراءة الكيلومتر (نهاية اليوم):", min_value=0.0, step=1.0)
+            
+        submit_btn = st.form_submit_button("➕ حفظ وتسجيل الحركة", use_container_width=True)
         
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        if st.button("➕ حفظ البيانات", use_container_width=True):
-            if car_number and km_end >= km_start:
-                entry = {
-                    "التاريخ": str(datetime.date.today()),
-                    "السيارة": car_number,
-                    "السائق": driver_name,
-                    "المسافة": km_end - km_start
+        if submit_btn:
+            if car_no and km_end >= km_start:
+                distance = km_end - km_start
+                new_row = {
+                    "التاريخ": str(entry_date),
+                    "رقم السيارة": car_no,
+                    "اسم السائق": driver,
+                    "قراءة بداية اليوم": km_start,
+                    "قراءة نهاية اليوم": km_end,
+                    "المسافة المقطوعة (كم)": distance,
+                    "عداد الزيت الحالي": km_end,
+                    "حد تغيير الزيت": oil_limit
                 }
-                st.session_state.data_history.append(entry)
-                st.success("تم حفظ البيانات بنجاح ومزامنتها!")
-            else:
-                st.error("يرجى التأكد من صحة رقم السيارة وقراءات الكيلومترات.")
+                # حفظ نسخة للتراجع
+                st.session_state.undo_stack.append(new_row)
                 
-    with col_btn2:
-        # زر التراجع عن آخر إضافة
-        if st.button("↩️ تراجع عن آخر إدخال", use_container_width=True):
-            if st.session_state.data_history:
-                removed = st.session_state.data_history.pop()
-                st.warning(f"تم التراجع عن إدخال السيارة: {removed.get('السيارة')}")
+                # إضافة للجدول الرئيسي
+                st.session_state.fleet_data = pd.concat([st.session_state.fleet_data, pd.DataFrame([new_row])], ignore_index=True)
+                st.success(f"تم تسجيل حركة السيارة ({car_no}) بنجاح! المسافة المقطوعة: {distance} كم.")
             else:
-                st.info("لا يوجد إدخالات سابقة للتراجع عنها.")
+                st.error("يرجى التأكد من إدخال رقم السيارة وأن قراءة نهاية اليوم أكبر من أو تساوي بداية اليوم.")
 
-# 🟢 التبويب 3: إدارة السيارات والصيانة وحذف البيانات
-elif st.session_state.current_tab == "إدارة":
-    st.subheader("🗑️ إدارة البيانات والتعديل حسب اليوم أو السيارة")
+    st.markdown("---")
+    # زر التراجع عن الإدخال
+    col_undo1, col_undo2 = st.columns([2, 1])
+    with col_undo2:
+        if st.button("↩️ تراجع عن آخر إدخال", use_container_width=True):
+            if not st.session_state.fleet_data.empty and st.session_state.undo_stack:
+                last_entry = st.session_state.undo_stack.pop()
+                st.session_state.fleet_data = st.session_state.fleet_data.drop(st.session_state.fleet_data.index[-1])
+                st.warning(f"تم التراجع عن إدخال السيارة: {last_entry.get('رقم السيارة')}")
+                st.rerun()
+            else:
+                st.info("لا توجد إدخالات سابقة للتراجع عنها.")
+
+# 🟢 3. إدارة الصيانة والحذف المتقدم
+elif st.session_state.current_tab == "إدارة الصيانة":
+    st.subheader("🛠️ إدارة السجلات وحذف البيانات حسب اليوم أو السيارة")
     
-    selected_date = st.date_input("اختر اليوم المراد إدارته:", datetime.date.today())
+    selected_date = st.date_input("اختر التاريخ المراد إدارته:", datetime.date.today())
+    date_str = str(selected_date)
     
-    delete_option = st.radio("خيارات الحذف والتعديل:", ["حذف سيارة/سجل معين فقط", "حذف بيانات اليوم بالكامل"])
+    action_type = st.radio("حدد نوع الإجراء المطلوبة:", ["تعديل / حذف سجل سيارة واحدة فقط", "حذف كافة بيانات اليوم المحدد بالكامل ⚠️"])
     
-    if delete_option == "حذف سيارة/سجل معين فقط":
-        target_car = st.text_input("أدخل رقم السيارة المراد حذف بياناتها لهذا اليوم:")
-        if st.button("🗑️ حذف بيانات هذه السيارة", use_container_width=True):
-            st.success(f"تم حذف سجلات السيارة {target_car} لتاريخ {selected_date} بنجاح.")
+    if action_type == "تعديل / حذف سجل سيارة واحدة فقط":
+        target_car = st.text_input("أدخل رقم السيارة المراد مسح سجلها لهذا اليوم:")
+        if st.button("🗑️ حذف سجل السيارة المحدد", use_container_width=True):
+            if not st.session_state.fleet_data.empty and target_car:
+                initial_count = len(st.session_state.fleet_data)
+                st.session_state.fleet_data = st.session_state.fleet_data[
+                    ~((st.session_state.fleet_data['التاريخ'] == date_str) & 
+                      (st.session_state.fleet_data['رقم السيارة'] == target_car))
+                ]
+                if len(st.session_state.fleet_data) < initial_count:
+                    st.success(f"تم حذف سجل السيارة {target_car} لتاريخ {date_str} بنجاح.")
+                else:
+                    st.warning("لم يتم العثور على سجل يطابق هذا الرقم وهذا التاريخ.")
+            else:
+                st.error("يرجى كتابة رقم السيارة التأكيدي.")
     else:
         st.markdown('<div class="danger-btn">', unsafe_allow_html=True)
-        if st.button("⚠️ حذف كافة بيانات اليوم المSelected بالكامل"):
-            st.error(f"تم مسح كافة سجلات يوم {selected_date} بنجاح.")
+        if st.button("⚠️ مسح وحذف بيانات هذا اليوم بالكامل"):
+            if not st.session_state.fleet_data.empty:
+                st.session_state.fleet_data = st.session_state.fleet_data[st.session_state.fleet_data['التاريخ'] != date_str]
+                st.error(f"تم مسح كافة سجلات يوم {date_str} بالكامل من النظام.")
+            else:
+                st.info("الجدول فارغ بالفعل.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-# 🟢 التبويب 4: تصدير Excel والتجربة
+# 🟢 4. تصدير التقارير
 elif st.session_state.current_tab == "التصدير":
-    st.subheader("📊 تصدير واستخراج التقارير (Excel / PDF)")
-    st.write("يمكنك تصدير السجلات المحدثة والمزامنة مباشرة من هنا:")
+    st.subheader("📥 تصدير كشوفات وتقارير أسطول الحركة")
+    st.write("يمكنك تصدير قاعدة البيانات الحالية بصيغ جاهزة للطباعة أو الأرشفة:")
+    
+    csv_data = st.session_state.fleet_data.to_csv(index=False).encode('utf-8-sig') if not st.session_state.fleet_data.empty else "".encode('utf-8-sig')
+    
     st.download_button(
-        label="📥 تحميل سجل الحركة كملف Excel",
-        data="التاريخ,السيارة,السائق,المسافة\n",
-        file_name=f"fleet_report_{datetime.date.today()}.csv",
-        mime="text/csv"
+        label="📄 تحميل التقرير الشامل كملف (CSV / Excel)",
+        data=csv_data,
+        file_name=f"تقرير_حركة_الشاحنات_{datetime.date.today()}.csv",
+        mime="text/csv",
+        use_container_width=True
     )
 
-# 🟢 التبويب 5: الإعدادات ومعلومات التطبيق والخروج
+# 🟢 5. الإعدادات، الشرح، والإدارة
 elif st.session_state.current_tab == "الإعدادات":
-    st.subheader("⚙️ إعدادات التطبيق والمعلومات")
+    st.subheader("⚙️ إعدادات البرنامج والمعلومات التعريفية")
     
     # 1. التعريف بالتطبيق
     with st.expander("ℹ️ ما هو هذا التطبيق ولماذا صُنع؟", expanded=True):
         st.write("""
-        **تطبيق متابعة شاحنات الصندوق:**
-        نظام ذكي وشامل مصمم خصيصاً لإدارة ومتابعة أسطول شاحنات وسيارات صندوق النظافة والتحسين بمحافظة المهرة.
-        صُنع هذا التطبيق بهدف حوكمة استهلاك الزيوت، ومتابعة حركة الكيلومترات اليومية للآليات، وضمان الصيانة الدوريّة والوقائية لحماية أصول الصندوق وتسهيل التنسيق بين اللابتوب والجوال لحظياً.
+        **تطبيق متابعة شاحنات الصندوق - محافظة المهـرة:**
+        نظام ذكي متكامل مصمم خصيصاً لإدارة ومتابعة أسطول شاحنات وسيارات **صندوق النظافة والتحسين بمحافظة المهرة**.
+        
+        **أهداف التطبيق:**
+        1. **حوكمة استهلاك الزيوت:** التنبيه الآلي المبكر قبل تجاوز العمر الافتراضي لزيت المحرك لحماية أصول الصندوق من الأعطال المكلفة.
+        2. **متابعة الكيلومترات اليومية:** تسجيل ودراسة المسافات المقطوعة لكل آلية وسائق بدقة عالية.
+        3. **الربط والمزامنة الفورية:** تمكين الإدارة والمشرفين من متابعة وتحديث البيانات لحظياً بين الجوال واللابتوب.
         """)
-    
-    # 2. معلومات صاحب وصانع التطبيق والإشراف
+
+    # 2. معلومات صاحب وصانع التطبيق (الخيار قبل الأخير)
     with st.expander("👨‍💻 صانع وإدارة التطبيق", expanded=True):
         st.markdown("""
         * **صانع وصاحب التطبيق والمدير لهذا البرنامج:**  
           ### ✨ **عماد محمد منهاج**
-        * **تحت إشراف المدير:**  
-          ### 👔 **محمد احمد بن عوشن**
-        * **النائب:**  
-          ### 👔 **عادل المسن**
         """)
-        
+
     st.markdown("---")
     
-    # 3. زر تسجيل الخروج باللون الأحمر مع نافذة تأكيد
-    st.markdown("### 🔒 الحساب والجلسة")
-    st.write(f"المستخدم الحالي: **{st.session_state.user_email}**")
+    # 3. إدارة الجلسة وتسجيل الخروج
+    st.markdown("### 🔒 الحساب والجلسة الحالية")
+    st.write(f"المستخدم المسجل حالياً: **{st.session_state.user_email}**")
     
+    if 'confirm_logout' not in st.session_state:
+        st.session_state.confirm_logout = False
+
     st.markdown('<div class="danger-btn">', unsafe_allow_html=True)
     if st.button("🚪 تسجيل الخروج من الحساب"):
-        st.session_state.show_logout_confirm = True
+        st.session_state.confirm_logout = True
     st.markdown('</div>', unsafe_allow_html=True)
-    
-    # تأكيد تسجيل الخروج
-    if st.session_state.get('show_logout_confirm', False):
+
+    if st.session_state.confirm_logout:
         st.warning("⚠️ هل أنت تأكد من رغبتك في تسجيل الخروج؟ سيتم إيقاف المزامنة اللحظية على هذا الجهاز.")
-        col_conf1, col_conf2 = st.columns(2)
-        with col_conf1:
-            if st.button("نعم، تأكيد الخروج", use_container_width=True):
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            if st.button("نعم، تأكيد الخروج النهائي", use_container_width=True):
                 st.session_state.logged_in = False
                 st.session_state.user_email = ""
-                st.session_state.show_logout_confirm = False
+                st.session_state.confirm_logout = False
                 st.rerun()
-        with col_conf2:
+        with col_c2:
             if st.button("إلغاء", use_container_width=True):
-                st.session_state.show_logout_confirm = False
+                st.session_state.confirm_logout = False
                 st.rerun()
