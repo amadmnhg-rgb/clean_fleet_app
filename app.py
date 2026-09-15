@@ -14,59 +14,83 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# 2. تصميم CSS المطور (Glassmorphism الفاخر)
+# 2. تصميم CSS المطور (Glassmorphism المريح والفاخر 100%)
 # ---------------------------------------------------------
 st.markdown("""
 <style>
+    /* خلفية متناسقة عميقة الثيم */
     .stApp {
-        background: linear-gradient(135deg, #0b0f19 0%, #111827 100%);
-        color: #f0f6fc;
+        background: radial-gradient(circle at 50% 10%, #0f172a 0%, #070a13 100%);
+        color: #f1f5f9;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
+    
+    /* شريط جانبي زجاجي فاخر */
     [data-testid="stSidebar"] {
-        background-color: rgba(15, 23, 42, 0.95);
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-        backdrop-filter: blur(15px);
-    }
-    .app-header-container {
-        background: linear-gradient(135deg, rgba(16, 37, 26, 0.85), rgba(10, 22, 38, 0.95));
-        border: 2px solid rgba(46, 204, 113, 0.4);
-        border-radius: 24px;
-        padding: 22px;
-        text-align: center;
+        background-color: rgba(15, 23, 42, 0.85);
+        border-left: 1px solid rgba(255, 255, 255, 0.06);
         backdrop-filter: blur(20px);
-        box-shadow: 0 12px 35px rgba(0, 255, 127, 0.15);
+    }
+    
+    /* الهيدر الرئيسي بأسلوب Glassmorphism 3D */
+    .app-header-container {
+        background: linear-gradient(135deg, rgba(16, 37, 26, 0.75), rgba(10, 22, 38, 0.85));
+        border: 1px solid rgba(46, 204, 113, 0.3);
+        border-radius: 22px;
+        padding: 20px;
+        text-align: center;
+        backdrop-filter: blur(25px);
+        box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.1);
         margin-bottom: 25px;
     }
+    
     .app-title-yellow {
         color: #f1c40f;
-        font-size: 28px;
+        font-size: 27px;
         font-weight: 900;
-        text-shadow: 0 0 12px rgba(241, 196, 15, 0.6);
-        margin-bottom: -5px;
+        text-shadow: 0 0 12px rgba(241, 196, 15, 0.5);
+        margin-bottom: -3px;
     }
+    
     .app-title-white {
         color: #ffffff;
-        font-size: 23px;
+        font-size: 22px;
         font-weight: 800;
     }
+    
+    /* بطاقات الجلاس المريحة للنظر والمتحركة */
     .stat-card {
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.07);
         border-radius: 18px;
-        padding: 18px;
+        padding: 16px;
         text-align: center;
-        backdrop-filter: blur(12px);
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(15px);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .stat-card:hover {
+        border-color: rgba(46, 204, 113, 0.5);
+        transform: translateY(-3px);
+        background: rgba(255, 255, 255, 0.05);
+    }
+    
+    /* تنسيق الجداول لتتوافق مع ثيم الجلاس */
+    [data-testid="stDataFrame"] {
+        background: rgba(15, 23, 42, 0.6);
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        padding: 5px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 3. إدارة جلسة الدخول الدائم (التخزين التلقائي للجلسة)
+# 3. إدارة جلسة البيانات وتسجيل الدخول الدائم والآمن
 # ---------------------------------------------------------
-if 'is_authenticated' not in st.session_state:
-    st.session_state.is_authenticated = True  # الدخول التلقائي السلس والمباشر
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = True  # الدخول لمرة واحدة وبقاء الجلسة
 
 if 'fleet_data' not in st.session_state:
     st.session_state.fleet_data = pd.DataFrame(columns=[
@@ -76,6 +100,19 @@ if 'fleet_data' not in st.session_state:
 
 if 'undo_stack' not in st.session_state:
     st.session_state.undo_stack = []
+
+# إذا قام المستخدم بتسجيل الخروج يدوياً من الإعدادات
+if not st.session_state.logged_in:
+    st.markdown("""
+        <div style="text-align: center; padding: 50px;">
+            <h2>🔒 تم تسجيل خروجك بنجاح من النظام</h2>
+            <p>يرجى إعادة تحديث الصفحة أو تسجيل الدخول من جديد.</p>
+        </div>
+    """, unsafe_allow_html=True)
+    if st.button("🔄 تسجيل الدخول مرة أخرى"):
+        st.session_state.logged_in = True
+        st.rerun()
+    st.stop()
 
 # ---------------------------------------------------------
 # 4. محرك استخلاص وترتيب رسائل الحركة اليومية أوتوماتيكياً
@@ -116,7 +153,7 @@ def parse_daily_fleet_messages(raw_text):
     return entries
 
 # ---------------------------------------------------------
-# 5. الشريط الجانبي للتنقل المطور
+# 5. الشريط الجانبي للتنقل (بالتسميات المعدلة)
 # ---------------------------------------------------------
 with st.sidebar:
     st.markdown("### 🚛 قائمة التحكم الذكية")
@@ -126,7 +163,7 @@ with st.sidebar:
             "📊 لوحة التحكم الرئيسية",
             "📝 الحركة اليومية (قراءة الرسائل)",
             "📋 السجل الشهري المجدول",
-            "📥 Excel والسجل العام",
+            "📁 السجل العام (Excel)",
             "⚙️ الإعدادات العامة والصيانة"
         ),
         label_visibility="collapsed"
@@ -137,21 +174,21 @@ with st.sidebar:
 # ---------------------------------------------------------
 st.markdown("""
     <div class="app-header-container">
-        <div style="font-size: 40px; margin-bottom: 5px;">🚛🐪🌴</div>
+        <div style="font-size: 38px; margin-bottom: 5px;">🚛🐪🌴</div>
         <div class="app-title-yellow">صندوق النظافة والتحسين</div>
         <div class="app-title-white">محافظة المهـرة</div>
-        <p style="color: #3498db; font-weight: bold; margin-top: 5px;">نظام إدارة الأسطول والزيوت الذكي - متزامن لحظياً</p>
+        <p style="color: #3498db; font-weight: bold; margin-top: 5px; font-size: 14px;">نظام إدارة الأسطول والزيوت الذكي - متزامن لحظياً</p>
     </div>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 7. محتوى الأقسام
+# 7. محتوى الأقسام التفاعلية
 # ---------------------------------------------------------
 
 if selected_tab == "📊 لوحة التحكم الرئيسية":
     st.subheader("📌 الحالة الفنية المباشرة ونسب استهلاك الزيوت")
-    df = st.session_state.fleet_data
     
+    df = st.session_state.fleet_data
     total_cars = len(df['رقم السيارة'].unique()) if not df.empty else 0
     today_str = str(datetime.date.today())
     today_df = df[df['التاريخ'] == today_str] if not df.empty else pd.DataFrame()
@@ -164,26 +201,27 @@ if selected_tab == "📊 لوحة التحكم الرئيسية":
 
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        st.markdown(f'<div class="stat-card"><h3 style="color:#e74c3c">{oil_exceeded}</h3><p>تجاوزت حد الزيت ⚠️</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><h3 style="color:#e74c3c; margin:0;">{oil_exceeded}</h3><p style="margin:5px 0 0 0; font-size:13px;">تجاوزت حد الزيت ⚠️</p></div>', unsafe_allow_html=True)
     with col2:
-        st.markdown(f'<div class="stat-card"><h3 style="color:#f39c12">{oil_warning}</h3><p>تحتاج صيانة قريباً 🛠️</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><h3 style="color:#f39c12; margin:0;">{oil_warning}</h3><p style="margin:5px 0 0 0; font-size:13px;">تحتاج صيانة قريباً 🛠️</p></div>', unsafe_allow_html=True)
     with col3:
-        st.markdown(f'<div class="stat-card"><h3 style="color:#3498db">{total_km_today:.1f}</h3><p>مسافة اليوم (كم) 🛣️</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><h3 style="color:#3498db; margin:0;">{total_km_today:.1f}</h3><p style="margin:5px 0 0 0; font-size:13px;">مسافة اليوم (كم) 🛣️</p></div>', unsafe_allow_html=True)
     with col4:
-        st.markdown(f'<div class="stat-card"><h3 style="color:#2ecc71">{cars_moved_today}</h3><p>تحركت اليوم 🚛</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><h3 style="color:#2ecc71; margin:0;">{cars_moved_today}</h3><p style="margin:5px 0 0 0; font-size:13px;">تحركت اليوم 🚛</p></div>', unsafe_allow_html=True)
     with col5:
-        st.markdown(f'<div class="stat-card"><h3 style="color:#9b59b6">{total_cars}</h3><p>إجمالي السيارات 🚚</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><h3 style="color:#9b59b6; margin:0;">{total_cars}</h3><p style="margin:5px 0 0 0; font-size:13px;">إجمالي السيارات 🚚</p></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("📋 جدول السجلات الحية لليوم")
-    if df.empty:
-        st.info("💡 لا توجد بيانات مسجلة اليوم. قم بلصق رسائل السائقين في قسم 'الحركة اليومية'.")
+    st.subheader("📋 جدول السجلات الحية لليوم (مباشر ومحدث)")
+    
+    if today_df.empty:
+        st.info("💡 لا توجد بيانات مسجلة اليوم حتى الآن. قم بلصق تقارير ورسائل السائقين في قسم 'الحركة اليومية (قراءة الرسائل)' لتظهر هنا فوراً.")
     else:
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(today_df, use_container_width=True)
 
 elif selected_tab == "📝 الحركة اليومية (قراءة الرسائل)":
     st.subheader("📥 قراءة واستخلاص تقارير الحركة والرسائل اليومية دفعة واحدة")
-    st.write("قم بلصق تقارير السائقين هنا، وسيقوم النظام بفرزها وترتيبها في الجداول تلقائياً:")
+    st.write("قم بلصق تقارير السائقين هنا، وسيقوم النظام بفرزها وترتيبها لتظهر مباشرة في السجلات الحية:")
     
     with st.form("bulk_message_form"):
         raw_messages = st.text_area(
@@ -199,10 +237,10 @@ elif selected_tab == "📝 الحركة اليومية (قراءة الرسائ�
                 new_df = pd.DataFrame(extracted_items)
                 st.session_state.undo_stack.append(new_df)
                 st.session_state.fleet_data = pd.concat([st.session_state.fleet_data, new_df], ignore_index=True)
-                st.success(f"تم بنجاح استخلاص وتسجيل بيانات {len(extracted_items)} شاحنات وتحديث الجداول!")
+                st.success(f"تم بنجاح استخلاص وتسجيل بيانات {len(extracted_items)} شاحنات وتحديث السجلات الحية لليوم!")
                 st.rerun()
             else:
-                st.warning("تعذر استخراج البيانات. تأكد من تطابق نمط النص مع التقارير.")
+                st.warning("تعذر استخراج البيانات. تأكد من تطابق نمط النص مع التقارير المطلوبة.")
 
     st.markdown("---")
     if st.button("↩️ تراجع عن آخر إدخال مجمع", use_container_width=True):
@@ -226,8 +264,10 @@ elif selected_tab == "📋 السجل الشهري المجدول":
     else:
         st.info("السجل الشهري سيتم تعبئته تلقائياً مع تراكم الحركات اليومية.")
 
-elif selected_tab == "📥 Excel والسجل العام":
+elif selected_tab == "📁 السجل العام (Excel)":
     st.subheader("📥 تصدير الكشوفات والتقارير بصيغة Excel / CSV")
+    st.write("ملف متوافق لحظياً مع جداول الأسطول والربط السحابي:")
+    
     csv_data = st.session_state.fleet_data.to_csv(index=False).encode('utf-8-sig') if not st.session_state.fleet_data.empty else "".encode('utf-8-sig')
     st.download_button(
         label="📄 تنزيل تقارير الأسطول المحدثة كملف جاهز",
@@ -242,6 +282,13 @@ elif selected_tab == "⚙️ الإعدادات العامة والصيانة":
     with st.expander("ℹ️ حول نظام إدارة أسطول صندوق النظافة - المهرة", expanded=False):
         st.write("نظام حوكمة الزيوت والحركة اليومية - مطور خصيصاً لمحافظة المهرة. صانع النظام: عماد محمد منهاج.")
     
+    st.markdown("---")
+    st.markdown("### 🚪 إدارة الحساب وجلسة الدخول")
+    if st.button("🔒 تسجيل الخروج من الحساب الحالي", type="secondary", use_container_width=True):
+        st.session_state.logged_in = False
+        st.success("تم تسجيل الخروج بنجاح.")
+        st.rerun()
+
     st.markdown("---")
     st.markdown("### ⚠️ منطقة العمليات الحساسة (الحذف والإدارة)")
     selected_date = st.date_input("اختر التاريخ المراد مراجعته للحذف:", datetime.date.today())
