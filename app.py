@@ -14,80 +14,127 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# 2. تصميم CSS المطور (Glassmorphism المريح والفاخر 100%)
+# 2. إدارة الثيم (الوضع الليلي والوضع النهاري المريح)
 # ---------------------------------------------------------
-st.markdown("""
+if 'theme_mode' not in st.session_state:
+    st.session_state.theme_mode = "🌙 الوضع الداكن"
+
+is_light = (st.session_state.theme_mode == "☀️ الوضع النهاري (أبيض مريح)")
+
+# تعريف الألوان بناءً على الثيم المختار
+if is_light:
+    bg_gradient = "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)"
+    app_bg = "#f8fafc"
+    text_color = "#1e293b"
+    sidebar_bg = "rgba(241, 245, 249, 0.95)"
+    sidebar_text = "#0f172a"
+    card_bg = "rgba(255, 255, 255, 0.85)"
+    card_border = "rgba(0, 0, 0, 0.08)"
+    card_shadow = "0 8px 30px rgba(0, 0, 0, 0.06)"
+    header_bg = "linear-gradient(135deg, rgba(235, 247, 240, 0.9), rgba(230, 240, 250, 0.95))"
+    header_border = "rgba(46, 204, 113, 0.4)"
+    title_yellow = "#27ae60"
+    title_white = "#1e293b"
+    table_bg = "rgba(255, 255, 255, 0.9)"
+else:
+    bg_gradient = "radial-gradient(circle at 50% 10%, #0f172a 0%, #070a13 100%)"
+    app_bg = "#070a13"
+    text_color = "#f1f5f9"
+    sidebar_bg = "rgba(15, 23, 42, 0.85)"
+    sidebar_text = "#f1f5f9"
+    card_bg = "rgba(255, 255, 255, 0.03)"
+    card_border = "rgba(255, 255, 255, 0.07)"
+    card_shadow = "0 8px 32px 0 rgba(0, 0, 0, 0.37)"
+    header_bg = "linear-gradient(135deg, rgba(16, 37, 26, 0.75), rgba(10, 22, 38, 0.85))"
+    header_border = "rgba(46, 204, 113, 0.3)"
+    title_yellow = "#f1c40f"
+    title_white = "#ffffff"
+    table_bg = "rgba(15, 23, 42, 0.6)"
+
+# ---------------------------------------------------------
+# 3. تصميم CSS المطور والخطوط العصرية (Cairo)
+# ---------------------------------------------------------
+st.markdown(f"""
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+
 <style>
-    /* خلفية متناسقة عميقة الثيم */
-    .stApp {
-        background: radial-gradient(circle at 50% 10%, #0f172a 0%, #070a13 100%);
-        color: #f1f5f9;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    }
+    /* تطبيق الخط العصري على كافة عناصر التطبيق */
+    .stApp, html, body, [class*="css"] {{
+        font-family: 'Cairo', sans-serif !important;
+    }}
+
+    .stApp {{
+        background: {bg_gradient};
+        color: {text_color};
+    }}
     
-    /* شريط جانبي زجاجي فاخر */
-    [data-testid="stSidebar"] {
-        background-color: rgba(15, 23, 42, 0.85);
-        border-left: 1px solid rgba(255, 255, 255, 0.06);
+    /* شريط جانبي زجاجي فاخر مع وضوح كامل للكلمات */
+    [data-testid="stSidebar"] {{
+        background-color: {sidebar_bg};
+        border-left: 1px solid {card_border};
         backdrop-filter: blur(20px);
-    }
+    }}
+    
+    [data-testid="stSidebar"] span, [data-testid="stSidebar"] label, [data-testid="stSidebar"] p {{
+        color: {sidebar_text} !important;
+        font-weight: 600 !important;
+    }}
     
     /* الهيدر الرئيسي بأسلوب Glassmorphism 3D */
-    .app-header-container {
-        background: linear-gradient(135deg, rgba(16, 37, 26, 0.75), rgba(10, 22, 38, 0.85));
-        border: 1px solid rgba(46, 204, 113, 0.3);
+    .app-header-container {{
+        background: {header_bg};
+        border: 1px solid {header_border};
         border-radius: 22px;
         padding: 20px;
         text-align: center;
         backdrop-filter: blur(25px);
-        box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.1);
+        box-shadow: {card_shadow};
         margin-bottom: 25px;
-    }
+    }}
     
-    .app-title-yellow {
-        color: #f1c40f;
+    .app-title-yellow {{
+        color: {title_yellow};
         font-size: 27px;
         font-weight: 900;
-        text-shadow: 0 0 12px rgba(241, 196, 15, 0.5);
+        text-shadow: 0 0 12px rgba(241, 196, 15, 0.3);
         margin-bottom: -3px;
-    }
+    }}
     
-    .app-title-white {
-        color: #ffffff;
+    .app-title-white {{
+        color: {title_white};
         font-size: 22px;
         font-weight: 800;
-    }
+    }}
     
     /* بطاقات الجلاس المريحة للنظر والمتحركة */
-    .stat-card {
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255, 255, 255, 0.07);
+    .stat-card {{
+        background: {card_bg};
+        border: 1px solid {card_border};
         border-radius: 18px;
         padding: 16px;
         text-align: center;
         backdrop-filter: blur(15px);
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        box-shadow: {card_shadow};
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .stat-card:hover {
+    }}
+    .stat-card:hover {{
         border-color: rgba(46, 204, 113, 0.5);
         transform: translateY(-3px);
-        background: rgba(255, 255, 255, 0.05);
-    }
+    }}
     
-    /* تنسيق الجداول لتتوافق مع ثيم الجلاس */
-    [data-testid="stDataFrame"] {
-        background: rgba(15, 23, 42, 0.6);
+    /* تنسيق الجداول لتتوافق مع الثيم */
+    [data-testid="stDataFrame"] {{
+        background: {table_bg};
         border-radius: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.05);
+        border: 1px solid {card_border};
         backdrop-filter: blur(10px);
         padding: 5px;
-    }
+    }}
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 3. إدارة جلسة البيانات وتسجيل الدخول الدائم والآمن
+# 4. إدارة جلسة البيانات وتسجيل الدخول الدائم والآمن
 # ---------------------------------------------------------
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = True  # الدخول لمرة واحدة وبقاء الجلسة
@@ -115,7 +162,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ---------------------------------------------------------
-# 4. محرك استخلاص وترتيب رسائل الحركة اليومية أوتوماتيكياً
+# 5. محرك استخلاص وترتيب رسائل الحركة اليومية أوتوماتيكياً
 # ---------------------------------------------------------
 def parse_daily_fleet_messages(raw_text):
     entries = []
@@ -153,7 +200,7 @@ def parse_daily_fleet_messages(raw_text):
     return entries
 
 # ---------------------------------------------------------
-# 5. الشريط الجانبي للتنقل (بالتسميات المعدلة)
+# 6. الشريط الجانبي للتنقل
 # ---------------------------------------------------------
 with st.sidebar:
     st.markdown("### 🚛 قائمة التحكم الذكية")
@@ -170,7 +217,7 @@ with st.sidebar:
     )
 
 # ---------------------------------------------------------
-# 6. الهيدر الرئيسي للتطبيق
+# 7. الهيدر الرئيسي للتطبيق
 # ---------------------------------------------------------
 st.markdown("""
     <div class="app-header-container">
@@ -182,7 +229,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 7. محتوى الأقسام التفاعلية
+# 8. محتوى الأقسام التفاعلية
 # ---------------------------------------------------------
 
 if selected_tab == "📊 لوحة التحكم الرئيسية":
@@ -278,7 +325,18 @@ elif selected_tab == "📁 السجل العام (Excel)":
     )
 
 elif selected_tab == "⚙️ الإعدادات العامة والصيانة":
-    st.subheader("⚙️ إعدادات النظام، الصيانة، وإدارة الحذف الآمن")
+    st.subheader("⚙️ إعدادات النظام، المظهر، وصيانة الأسطول")
+    
+    with st.expander("🎨 تخصيص المظهر والثيم (الوضع الليلي والنهاري)", expanded=True):
+        selected_theme = st.selectbox(
+            "اختر وضع العرض المفضل:",
+            ("🌙 الوضع الداكن", "☀️ الوضع النهاري (أبيض مريح)"),
+            index=0 if st.session_state.theme_mode == "🌙 الوضع الداكن" else 1
+        )
+        if selected_theme != st.session_state.theme_mode:
+            st.session_state.theme_mode = selected_theme
+            st.rerun()
+
     with st.expander("ℹ️ حول نظام إدارة أسطول صندوق النظافة - المهرة", expanded=False):
         st.write("نظام حوكمة الزيوت والحركة اليومية - مطور خصيصاً لمحافظة المهرة. صانع النظام: عماد محمد منهاج.")
     
