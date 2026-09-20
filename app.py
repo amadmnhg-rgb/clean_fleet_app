@@ -8,14 +8,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+import time
 import uuid
 from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
 
-from fleet import styles
+from fleet import analytics, styles, util
 from fleet.config import (
     ALL_COLUMNS,
     APP_ICON,
@@ -24,6 +26,7 @@ from fleet.config import (
     BASE_COLUMNS,
     DEFAULT_OIL_FACTOR,
     DEFAULT_OIL_LIMIT,
+    DUPLICATE_GUARD_SECONDS,
     NEAR_LIMIT_RATIO,
     OIL_STATE_COLUMNS,
     ORG_NAME,
@@ -72,7 +75,11 @@ def init_session():
     ss = st.session_state
     ss.setdefault("logged_in", True)
     ss.setdefault("undo_stack", [])
-    ss.setdefault("flash", None)
+    ss.setdefault("flash_queue", [])
+    ss.setdefault("daily_text_nonce", 0)      # لتدوير مفتاح text_area وتفريغه بأمان
+    ss.setdefault("last_batch_signature", None)
+    ss.setdefault("last_batch_time", 0.0)
+    ss.setdefault("is_saving", False)
 
     if "settings" not in ss:
         saved = STORAGE.load_settings()
@@ -145,12 +152,17 @@ def ensure_state(mapping: dict, plate: str) -> dict:
 
 
 def close_cycle(plate: str, on_date: str = None, note: str = "تم تغيير الزيت"):
-    """إغلاق الدورة الحالية وبدء دورة جديدة من الصفر (مستقلة تماماً)."""
+    """إغلاق الدورة الحالية وبدء دورة جديدة من الصفر (مستقلة تماماً).
+
+    يُسجَّل في سجل تغيير الزيت: السيارة، التاريخ، الوقت، المسافة الفعلية
+    التي بلغتها الدورة عند الإغلاق، والحد المعتمد وقتها — تماماً كما وقع،
+    حتى لو تم تغيير الزيت في منتصف الشهر."""
     mapping = state_map()
     state = ensure_state(mapping, plate)
     day = on_date or TODAY
     STORAGE.append_oil_log({
         "التاريخ": day,
+        "الوقت": datetime.now().strftime("%H:%M:%S"),
         "رقم السيارة": plate,
         "الدورة المنتهية": state["دورة الزيت"],
         "العداد عند الإغلاق": state["عداد الدورة"],
@@ -168,61 +180,108 @@ def close_cycle(plate: str, on_date: str = None, note: str = "تم تغيير ا
 # ---------------------------------------------------------------------------
 # 5) عمليات البيانات
 # ---------------------------------------------------------------------------
-def add_batch(rows: list) -> dict:
-    """إضافة دفعة سجلات مع تحديث عدادات الزيت، وحفظ نقطة تراجع."""
+def _batch_signature(rows: list) -> str:
+    """بصمة ثابتة لمحتوى دفعة سجلات، تُستخدم لمنع حفظ نفس الدفعة مرتين."""
+    parts = sorted(
+        f'{r.get("التاريخ","")}|{str(r.get("رقم السيارة","")).strip()}|'
+        f'{r.get("المسافة المقطوعة (كم)",0)}|{r.get("عدد الزفات",0)}|'
+        f'{str(r.get("تفاصيل الزفات","")).strip()}|{str(r.get("الوقت المستغرق","")).strip()}'
+        for r in rows
+    )
+    return hashlib.sha256("||".join(parts).encode("utf-8")).hexdigest()
+
+
+def add_batch(rows: list, dedup: bool = False) -> dict:
+    """
+    إضافة دفعة سجلات مع تحديث عدادات الزيت، وحفظ نقطة تراجع.
+
+    عند dedup=True (مسار «تحليل وحفظ الرسائل») تُطبَّق حماية مزدوجة الحفظ
+    داخل منطق الحفظ نفسه (وليس فقط في الواجهة): قفل تنفيذ لحظي يمنع أي
+    تنفيذ متداخل، وبصمة محتوى الدفعة مقارنة بآخر دفعة محفوظة بنجاح — فإذا
+    كانت نفس البيانات بالضبط خلال نافذة زمنية قصيرة تُرفض الدفعة الثانية
+    ولا تُكتب في قاعدة البيانات مطلقاً، بصرف النظر عن حالة حقل النص.
+    """
     if not rows:
-        return {"added": 0, "alerts": []}
+        return {"added": 0, "alerts": [], "duplicate": False, "error": None}
 
-    mapping = state_map()
-    before_snapshot = {k: dict(v) for k, v in mapping.items()}
-    batch_id = uuid.uuid4().hex[:10]
-    prepared, alerts = [], []
+    ss = st.session_state
+    signature = _batch_signature(rows) if dedup else None
 
-    for row in rows:
-        plate = str(row["رقم السيارة"]).strip()
-        state = ensure_state(mapping, plate)
-        limit = float(state["حد تغيير الزيت"] or OIL_LIMIT)
-        counter, reached, dropped = add_distance(
-            state["عداد الدورة"], limit,
-            row.get("المسافة المقطوعة (كم)", 0), OIL_FACTOR)
+    if dedup:
+        if ss.get("is_saving"):
+            return {"added": 0, "alerts": [], "duplicate": True, "error": None}
+        now = time.time()
+        if (ss.get("last_batch_signature") == signature and
+                (now - float(ss.get("last_batch_time") or 0)) < DUPLICATE_GUARD_SECONDS):
+            return {"added": 0, "alerts": [], "duplicate": True, "error": None}
+        ss.is_saving = True
 
-        state["عداد الدورة"] = counter
-        state["آخر تحديث"] = row.get("التاريخ", TODAY)
+    try:
+        mapping = state_map()
+        before_snapshot = {k: dict(v) for k, v in mapping.items()}
+        batch_id = uuid.uuid4().hex[:10]
+        prepared, alerts = [], []
 
-        prepared.append({
-            "التاريخ": row.get("التاريخ", TODAY),
-            "رقم السيارة": plate,
-            "عدد الزفات": int(row.get("عدد الزفات", 0)),
-            "تفاصيل الزفات": row.get("تفاصيل الزفات", "غير محدد"),
-            "المسافة المقطوعة (كم)": float(row.get("المسافة المقطوعة (كم)", 0)),
-            "الوقت المستغرق": row.get("الوقت المستغرق", "غير محدد"),
-            "عداد الزيت الحالي": counter,
-            "حد تغيير الزيت": limit,
-            "دورة الزيت": int(state["دورة الزيت"]),
-            "معرف السجل": uuid.uuid4().hex[:12],
-            "رقم الدفعة": batch_id,
-        })
+        for row in rows:
+            plate = str(row["رقم السيارة"]).strip()
+            state = ensure_state(mapping, plate)
+            limit = float(state["حد تغيير الزيت"] or OIL_LIMIT)
+            counter, reached, dropped = add_distance(
+                state["عداد الدورة"], limit,
+                row.get("المسافة المقطوعة (كم)", 0), OIL_FACTOR)
 
-        if reached:
-            alerts.append({
-                "plate": plate,
-                "limit": limit,
-                "cycle": int(state["دورة الزيت"]),
-                "dropped": dropped,
+            state["عداد الدورة"] = counter
+            state["آخر تحديث"] = row.get("التاريخ", TODAY)
+
+            prepared.append({
+                "التاريخ": row.get("التاريخ", TODAY),
+                "رقم السيارة": plate,
+                "عدد الزفات": int(row.get("عدد الزفات", 0)),
+                "تفاصيل الزفات": row.get("تفاصيل الزفات", "غير محدد"),
+                "المسافة المقطوعة (كم)": float(row.get("المسافة المقطوعة (كم)", 0)),
+                "الوقت المستغرق": row.get("الوقت المستغرق", "غير محدد"),
+                "عداد الزيت الحالي": counter,
+                "حد تغيير الزيت": limit,
+                "دورة الزيت": int(state["دورة الزيت"]),
+                "معرف السجل": uuid.uuid4().hex[:12],
+                "رقم الدفعة": batch_id,
             })
 
-    STORAGE.append_records(prepared)
-    save_state_map(mapping)
-    st.session_state.fleet_data = coerce_records(
-        pd.concat([st.session_state.fleet_data, pd.DataFrame(prepared)],
-                  ignore_index=True))
-    st.session_state.undo_stack.append({
-        "batch_id": batch_id,
-        "count": len(prepared),
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "state_before": before_snapshot,
-    })
-    return {"added": len(prepared), "alerts": alerts, "batch_id": batch_id}
+            if reached:
+                alerts.append({
+                    "plate": plate,
+                    "limit": limit,
+                    "cycle": int(state["دورة الزيت"]),
+                    "dropped": dropped,
+                })
+
+        try:
+            STORAGE.append_records(prepared)
+        except Exception as exc:  # noqa: BLE001
+            # فشل الحفظ الفعلي (مثال: انقطاع اتصال Google Sheets):
+            # لا نغيّر أي حالة محلية حتى يستطيع المستخدم إعادة المحاولة بأمان.
+            return {"added": 0, "alerts": [], "duplicate": False, "error": str(exc)}
+
+        save_state_map(mapping)
+        st.session_state.fleet_data = coerce_records(
+            pd.concat([st.session_state.fleet_data, pd.DataFrame(prepared)],
+                      ignore_index=True))
+        st.session_state.undo_stack.append({
+            "batch_id": batch_id,
+            "count": len(prepared),
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "state_before": before_snapshot,
+        })
+
+        if dedup:
+            ss.last_batch_signature = signature
+            ss.last_batch_time = time.time()
+
+        return {"added": len(prepared), "alerts": alerts, "batch_id": batch_id,
+                "duplicate": False, "error": None}
+    finally:
+        if dedup:
+            ss.is_saving = False
 
 
 def undo_last_batch() -> int:
@@ -288,23 +347,35 @@ def fleet_overview() -> pd.DataFrame:
         return pd.DataFrame(columns=[
             "رقم السيارة", "دورة الزيت", "عداد الزيت الحالي", "حد تغيير الزيت",
             "المتبقي (كم)", "الحالة", "بداية الدورة", "آخر تحديث"])
-    return pd.DataFrame(rows).sort_values("عداد الزيت الحالي", ascending=False)
+    # ترتيب افتراضي تصاعدي حسب رقم السيارة عددياً (1، 2، 13، 14) — التنبيهات
+    # العاجلة (بلغت الحد / قريبة من الحد) تُعرض بالفعل كبطاقات منفصلة أعلى
+    # لوحة التحكم، فلا حاجة لترتيب هذا الجدول حسب الأولوية.
+    return util.sort_by_plate(pd.DataFrame(rows))
 
 
 def show_table(df: pd.DataFrame, columns: list = None):
+    """يعرض جدولاً مع ضمان أنواع بيانات ثابتة لكل عمود (رقم السيارة، عدد
+    الزفات، ...) لمنع ظهور رموز أو نقاط بدل القيم الحقيقية، ويجعل الجدول
+    قابلاً للتمرير أفقياً بأمان على شاشات الجوال الضيقة."""
     if df is None or len(df) == 0:
         st.info("لا توجد بيانات لعرضها حتى الآن.")
         return
     view = df[columns] if columns else df
-    st.dataframe(view, width="stretch", hide_index=True)
+    st.dataframe(styles.safe_table(view), width="stretch", hide_index=True)
 
 
-def flash():
-    msg = st.session_state.get("flash")
-    if msg:
-        kind, text = msg
+def flash(kind: str, text: str):
+    """يضيف رسالة إلى قائمة الانتظار لعرضها بعد أقرب st.rerun() — لأن أي
+    st.success/st.error يُستدعى مباشرة قبل rerun يُفقد فور إعادة التشغيل."""
+    st.session_state.setdefault("flash_queue", [])
+    st.session_state.flash_queue.append((kind, text))
+
+
+def render_flash():
+    queue = st.session_state.get("flash_queue") or []
+    for kind, text in queue:
         getattr(st, kind)(text)
-        st.session_state.flash = None
+    st.session_state.flash_queue = []
 
 
 # ---------------------------------------------------------------------------
@@ -333,27 +404,100 @@ if not st.session_state.logged_in:
 
 
 # ---------------------------------------------------------------------------
-# 8) الشريط الجانبي
+# 8) الشريط الجانبي + شريط التنقل السفلي (الجوال) + حفظ آخر قسم مفتوح
 # ---------------------------------------------------------------------------
 SECTIONS = [
     "📊 لوحة التحكم الرئيسية",
     "📝 الحركة اليومية (قراءة الرسائل)",
     "📋 السجل الشهري المجدول",
+    "📈 التحليلات والرسوم البيانية",
     "📁 السجل العام (Excel / CSV)",
     "⚙️ الإعدادات العامة والصيانة",
 ]
+SECTION_ICONS = [s.split(" ", 1)[0] for s in SECTIONS]
+SECTION_SHORT = ["الرئيسية", "الحركة", "الشهري", "التحليلات", "الأرشيف", "الإعدادات"]
+SECTION_SLUGS = ["dashboard", "daily", "monthly", "analytics", "export", "settings"]
+SLUG_BY_SECTION = dict(zip(SECTIONS, SECTION_SLUGS))
+SECTION_BY_SLUG = dict(zip(SECTION_SLUGS, SECTIONS))
+
+
+def _read_section_from_url() -> str:
+    """يستعيد آخر قسم مفتوح من رابط الصفحة حتى يحافظ التطبيق على تقدّم
+    المستخدم عند الخروج والعودة (تحديث الصفحة أو إعادة فتحها بنفس الرابط)."""
+    try:
+        slug = st.query_params.get("section")
+    except Exception:  # noqa: BLE001
+        slug = None
+    if isinstance(slug, list):
+        slug = slug[0] if slug else None
+    return SECTION_BY_SLUG.get(slug, SECTIONS[0])
+
+
+def _sync_query_param(new_section: str):
+    try:
+        st.query_params["section"] = SLUG_BY_SECTION[new_section]
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def request_section(new_section: str):
+    """يُستخدم من شريط التنقل السفلي (خارج الشريط الجانبي) لطلب الانتقال
+    إلى قسم آخر. لا يُعدَّل مفتاح ودجت الراديو مباشرة هنا لأنه سبق إنشاؤه
+    في هذا التشغيل؛ بدلاً من ذلك تُحفظ الرغبة في `pending_section` وتُطبَّق
+    في بداية التشغيل التالي قبل إنشاء أي عنصر — وهذا يمنع تعارض حالة
+    الودجت الذي يسببه Streamlit عند تعديل مفتاح عنصر بعد إنشائه."""
+    st.session_state.pending_section = new_section
+
+
+st.session_state.setdefault("current_section", _read_section_from_url())
+if st.session_state.current_section not in SECTIONS:
+    st.session_state.current_section = SECTIONS[0]
+st.session_state.setdefault("sidebar_section_radio", st.session_state.current_section)
+
+# تطبيق أي طلب انتقال معلَّق (من الشريط السفلي) قبل إنشاء ودجت الراديو
+_pending = st.session_state.pop("pending_section", None)
+if _pending and _pending in SECTIONS:
+    st.session_state["sidebar_section_radio"] = _pending
+    st.session_state.current_section = _pending
+    _sync_query_param(_pending)
 
 with st.sidebar:
     st.markdown(f"### {APP_ICON} {APP_TITLE}")
     st.caption(ORG_NAME)
-    section = st.radio("الأقسام التشغيلية", SECTIONS, label_visibility="collapsed")
+    section = st.radio(
+        "الأقسام التشغيلية", SECTIONS, label_visibility="collapsed",
+        key="sidebar_section_radio",
+    )
     st.divider()
     st.caption("🟢 متصل بـ Google Sheets" if IS_CLOUD else "🟡 تخزين محلي")
     st.caption(f"حد تغيير الزيت الحالي: **{OIL_LIMIT:,.0f} كم**")
     st.caption(f"إجمالي السجلات: **{len(st.session_state.fleet_data)}**")
 
-flash()
+if section != st.session_state.current_section:
+    # المستخدم غيّر القسم مباشرة من الشريط الجانبي (اللابتوب)
+    st.session_state.current_section = section
+    _sync_query_param(section)
+
+render_flash()
 data = st.session_state.fleet_data
+
+
+def render_bottom_nav():
+    """شريط تنقل سفلي عائم (كبسولة زجاجية) — يظهر على الجوال فقط عبر CSS،
+    ويبقى الشريط الجانبي الكامل هو واجهة التنقل على اللابتوب/الكمبيوتر."""
+    current = st.session_state.current_section
+    with st.container(key="bottom_nav"):
+        cols = st.columns(len(SECTIONS))
+        for i, (col, sec, icon, short) in enumerate(
+                zip(cols, SECTIONS, SECTION_ICONS, SECTION_SHORT)):
+            with col:
+                if st.button(icon, key=f"bn_{i}", help=sec):
+                    request_section(sec)
+                    st.rerun()
+                st.caption(("● " if sec == current else "") + short)
+
+
+render_bottom_nav()
 
 
 # ---------------------------------------------------------------------------
@@ -409,11 +553,15 @@ def page_dashboard():
                                  key=f"reset_{row['رقم السيارة']}",
                                  width="stretch"):
                         close_cycle(str(row["رقم السيارة"]))
-                        st.session_state.flash = (
-                            "success",
-                            f"تم إغلاق دورة السيارة {row['رقم السيارة']} "
+                        flash("success", f"تم إغلاق دورة السيارة {row['رقم السيارة']} "
                             "وبدأت دورة جديدة من الصفر.")
                         st.rerun()
+
+        near = overview[overview["الحالة"] == "قريبة من الحد"]
+        if len(near):
+            names = "، ".join(str(p) for p in near["رقم السيارة"].tolist())
+            st.warning(f"⚠️ اقترب موعد تغيير الزيت لـ {len(near)} سيارة "
+                       f"(بلغت 90% من الحد فأكثر): {names}.")
 
     st.subheader("🛢️ حالة عدادات الزيت (الدورة الحالية)")
     if len(overview):
@@ -457,17 +605,19 @@ def page_daily():
         st.text_input("حد تغيير الزيت المعتمد حالياً (كم)",
                       value=f"{OIL_LIMIT:,.0f}", disabled=True)
 
+    text_key = f"daily_raw_text_{st.session_state.daily_text_nonce}"
     raw = st.text_area(
         "نص رسائل الحركة اليومية",
         height=230,
         placeholder=SAMPLE,
         help="مثال: سيارة رقم 12 المسافه 140 كم الوقت من 7 الى 12 الزفات 3",
+        key=text_key,
     )
 
     b1, b2, b3 = st.columns([2, 1, 1])
     with b1:
         analyze = st.button("🔍 تحليل وحفظ الرسائل", type="primary",
-                            width="stretch")
+                            width="stretch", disabled=st.session_state.is_saving)
     with b2:
         preview = st.button("👁️ معاينة فقط", width="stretch")
     with b3:
@@ -481,30 +631,41 @@ def page_daily():
                        "عبارة «سيارة رقم ...» أو «شاحنة رقم ...».")
         else:
             st.success(f"تم التعرف على {len(parsed)} سجل (معاينة بدون حفظ).")
-            st.dataframe(pd.DataFrame(parsed), width="stretch",
-                         hide_index=True)
+            st.dataframe(styles.safe_table(pd.DataFrame(parsed)),
+                         width="stretch", hide_index=True)
 
     if analyze:
         parsed = parse_daily_fleet_messages(raw, entry_date.isoformat())
         if not parsed:
             st.warning("لم يتم التعرف على أي سيارة في النص.")
         else:
-            result = add_batch(parsed)
-            st.success(f"✅ تم حفظ {result['added']} سجل بنجاح.")
-            for alert in result["alerts"]:
-                st.error(
-                    f"🚨 السيارة {alert['plate']} بلغت حد تغيير الزيت "
-                    f"({alert['limit']:,.0f} كم) في الدورة رقم {alert['cycle']}. "
-                    "توقف العداد عند الحد ولن يتجاوزه. اعتمد تغيير الزيت من "
-                    "لوحة التحكم لتبدأ دورة جديدة من الصفر.")
-            st.dataframe(pd.DataFrame(parsed), width="stretch",
-                         hide_index=True)
+            result = add_batch(parsed, dedup=True)
+            if result["duplicate"]:
+                st.info("ℹ️ هذه البيانات نفسها تم حفظها للتو — لم تتكرر "
+                        "العملية لتفادي تكرار السجلات في Google Sheets. "
+                        "عدّل النص أو انتظر قليلاً إن كنت تقصد إدخالاً جديداً.")
+            elif result["error"]:
+                st.error(f"❌ فشل حفظ السجلات ({result['error']}). لم يُحذف "
+                         "النص حتى تستطيع إعادة المحاولة.")
+            else:
+                # الرسائل تُوضع في قائمة الانتظار لأن الصفحة ستُعاد فوراً
+                # لتفريغ حقل النص — وأي st.success/st.error هنا سيُفقد قبل
+                # أن يراه المستخدم لولا آلية flash().
+                flash("success", f"✅ تم حفظ {result['added']} سجل بنجاح.")
+                for alert in result["alerts"]:
+                    flash("error", (
+                        f"🚨 السيارة {alert['plate']} بلغت حد تغيير الزيت "
+                        f"({alert['limit']:,.0f} كم) في الدورة رقم {alert['cycle']}. "
+                        "توقف العداد عند الحد ولن يتجاوزه. اعتمد تغيير الزيت من "
+                        "لوحة التحكم لتبدأ دورة جديدة من الصفر."))
+                # تفريغ الحقل بأمان: تدوير مفتاح الودجت بدل تعديل قيمته مباشرة
+                st.session_state.daily_text_nonce += 1
+                st.rerun()
 
     if undo:
         removed = undo_last_batch()
         if removed:
-            st.session_state.flash = ("success",
-                                      f"تم التراجع عن آخر إدخال ({removed} سجل).")
+            flash("success", f"تم التراجع عن آخر إدخال ({removed} سجل).")
             st.rerun()
         else:
             st.info("لا يوجد إدخال يمكن التراجع عنه.")
@@ -542,7 +703,7 @@ def page_daily():
             for alert in result["alerts"]:
                 msg += (f" 🚨 السيارة {alert['plate']} بلغت حد الزيت "
                         f"({alert['limit']:,.0f} كم).")
-            st.session_state.flash = ("success", msg)
+            flash("success", msg)
             st.rerun()
 
     st.divider()
@@ -577,6 +738,9 @@ def page_monthly():
     if len(subset) == 0:
         st.info("لا توجد سجلات في هذا الشهر.")
         return
+    # الترتيب الزمني قبل التجميع يضمن أن "آخر قيمة" لكل سيارة (عداد الزيت
+    # ودورته) تعكس فعلاً آخر سجل حقيقي لها وليس ترتيب إدخال عشوائي.
+    subset = subset.sort_values("التاريخ")
 
     grouped = subset.groupby("رقم السيارة").agg(**{
         "عدد أيام العمل": ("التاريخ", "nunique"),
@@ -589,6 +753,9 @@ def page_monthly():
     }).reset_index()
     grouped["متوسط المسافة اليومية (كم)"] = grouped["متوسط المسافة اليومية (كم)"].round(1)
     grouped["إجمالي المسافة (كم)"] = grouped["إجمالي المسافة (كم)"].round(1)
+    # ترتيب افتراضي تصاعدي حسب رقم السيارة عددياً (1، 2، 13، 14) بدل
+    # الترتيب الأبجدي الذي ينتجه groupby افتراضياً (1، 13، 14، 2).
+    grouped = util.sort_by_plate(grouped)
 
     c = st.columns(4)
     totals = [
@@ -621,6 +788,78 @@ def page_monthly():
 
 
 # ---------------------------------------------------------------------------
+# 11.5) القسم: التحليلات والرسوم البيانية
+# ---------------------------------------------------------------------------
+def page_analytics():
+    st.markdown(styles.header(
+        "📈 التحليلات والرسوم البيانية",
+        "رسوم بيانية مبنية بالكامل على البيانات الفعلية المسجَّلة في النظام"),
+        unsafe_allow_html=True)
+
+    if len(data) == 0:
+        st.info("لا توجد بيانات كافية لعرض التحليلات بعد.")
+        return
+
+    period = st.radio("اختر الفترة", analytics.PERIODS, index=1, horizontal=True,
+                      key="analytics_period")
+
+    # ---------------- العمليات حسب الفترة ----------------------------------
+    st.subheader("🧾 عدد العمليات حسب الفترة")
+    ops = analytics.operations_by_period(data, period)
+    if len(ops):
+        st.bar_chart(ops.set_index("الفترة")["عدد العمليات"])
+        show_table(ops)
+    else:
+        st.info("لا توجد عمليات لعرضها.")
+
+    st.divider()
+
+    # ---------------- استخدام السيارات (لفترة محددة أو للكل) ---------------
+    st.subheader("🚚 السيارات الأكثر استخدامًا")
+    values = ["كل الفترات"] + analytics.period_values(data, period)
+    chosen_value = st.selectbox("عرض بيانات:", values, key="analytics_value")
+    scoped = data if chosen_value == "كل الفترات" else \
+        analytics.filter_by_period_value(data, period, chosen_value)
+
+    usage = analytics.usage_by_vehicle(scoped, top_n=15)
+    if len(usage):
+        st.bar_chart(usage.set_index("رقم السيارة")["إجمالي المسافة (كم)"])
+        show_table(usage)
+    else:
+        st.info("لا توجد بيانات استخدام لهذه الفترة.")
+
+    st.divider()
+
+    # ---------------- مقارنة السيارات ---------------------------------------
+    st.subheader("⚖️ مقارنة السيارات")
+    all_plates = util.sort_plates(data["رقم السيارة"].unique())
+    default_plates = all_plates[: min(3, len(all_plates))]
+    chosen = st.multiselect("اختر سيارتين أو أكثر للمقارنة", all_plates,
+                            default=default_plates, key="compare_plates")
+
+    if len(chosen) < 2:
+        st.info("اختر سيارتين على الأقل لعرض المقارنة.")
+    else:
+        totals = analytics.comparison_totals(data, chosen)
+        show_table(totals)
+        if len(totals):
+            winner = totals.iloc[0]
+            st.markdown(styles.panel(
+                f"🏆 الأكثر استخدامًا ضمن المختارة: <b>السيارة "
+                f"{winner['رقم السيارة']}</b> بإجمالي "
+                f"<b>{winner['إجمالي المسافة (كم)']:,.0f} كم</b> "
+                f"({int(winner['عدد العمليات'])} عملية)."),
+                unsafe_allow_html=True)
+
+        pivot = analytics.compare_vehicles(data, chosen, period)
+        if len(pivot):
+            st.caption("المسافة المقطوعة عبر الفترات لكل سيارة مختارة")
+            st.line_chart(pivot)
+        else:
+            st.info("لا توجد بيانات كافية لرسم المقارنة عبر الفترات.")
+
+
+# ---------------------------------------------------------------------------
 # 12) القسم الرابع: السجل العام (Excel / CSV)
 # ---------------------------------------------------------------------------
 def page_export():
@@ -635,7 +874,7 @@ def page_export():
 
     f1, f2, f3 = st.columns(3)
     with f1:
-        plates = ["الكل"] + sorted(data["رقم السيارة"].unique().tolist())
+        plates = ["الكل"] + util.sort_plates(data["رقم السيارة"].unique())
         plate = st.selectbox("رقم السيارة", plates)
     with f2:
         start = st.date_input("من تاريخ", value=date.today().replace(day=1),
@@ -737,7 +976,7 @@ def page_settings():
                 state["عداد الدورة"] = min(float(state["عداد الدورة"]),
                                            float(new_limit))
             save_state_map(mapping)
-        st.session_state.flash = ("success", "تم حفظ الإعدادات بنجاح.")
+        flash("success", "تم حفظ الإعدادات بنجاح.")
         st.rerun()
 
     # --- إغلاق دورة يدوياً -------------------------------------------------
@@ -752,9 +991,7 @@ def page_settings():
             st.write("")
             if st.button("✅ إغلاق الدورة", width="stretch"):
                 close_cycle(str(target))
-                st.session_state.flash = (
-                    "success",
-                    f"تم إغلاق دورة السيارة {target} وبدء دورة جديدة من الصفر.")
+                flash("success", f"تم إغلاق دورة السيارة {target} وبدء دورة جديدة من الصفر.")
                 st.rerun()
         show_table(overview)
     else:
@@ -784,7 +1021,7 @@ def page_settings():
                        width="stretch")
     if st.button("🔄 تحديث البيانات من قاعدة البيانات", width="stretch"):
         reload_from_storage()
-        st.session_state.flash = ("success", "تم تحديث البيانات.")
+        flash("success", "تم تحديث البيانات.")
         st.rerun()
 
     # --- منطقة الحذف المتقدمة ---------------------------------------------
@@ -800,7 +1037,7 @@ def page_settings():
             c1, c2 = st.columns(2)
             with c1:
                 del_plate = st.selectbox(
-                    "رقم السيارة", sorted(data["رقم السيارة"].unique().tolist()),
+                    "رقم السيارة", util.sort_plates(data["رقم السيارة"].unique()),
                     key="del_plate")
             with c2:
                 plate_dates = sorted(
@@ -813,8 +1050,7 @@ def page_settings():
                 mask = ((data["رقم السيارة"] == del_plate) &
                         (data["التاريخ"] == del_date))
                 removed = delete_records(mask)
-                st.session_state.flash = (
-                    "success", f"تم حذف {removed} سجل للسيارة {del_plate} "
+                flash("success", f"تم حذف {removed} سجل للسيارة {del_plate} "
                                f"بتاريخ {del_date}.")
                 st.rerun()
 
@@ -827,8 +1063,7 @@ def page_settings():
             if st.button("حذف بيانات اليوم كاملاً", type="primary",
                          width="stretch", disabled=not confirm2):
                 removed = delete_records(data["التاريخ"] == day)
-                st.session_state.flash = (
-                    "success", f"تم حذف {removed} سجل بتاريخ {day}.")
+                flash("success", f"تم حذف {removed} سجل بتاريخ {day}.")
                 st.rerun()
 
     # --- تسجيل الخروج ------------------------------------------------------
@@ -845,8 +1080,9 @@ PAGES = {
     SECTIONS[0]: page_dashboard,
     SECTIONS[1]: page_daily,
     SECTIONS[2]: page_monthly,
-    SECTIONS[3]: page_export,
-    SECTIONS[4]: page_settings,
+    SECTIONS[3]: page_analytics,
+    SECTIONS[4]: page_export,
+    SECTIONS[5]: page_settings,
 }
 PAGES[section]()
 
