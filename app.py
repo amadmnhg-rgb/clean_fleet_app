@@ -27,6 +27,7 @@ from fleet.config import (
     DEFAULT_OIL_FACTOR,
     DEFAULT_OIL_LIMIT,
     DUPLICATE_GUARD_SECONDS,
+    NAV_SECTIONS,
     NEAR_LIMIT_RATIO,
     OIL_STATE_COLUMNS,
     ORG_NAME,
@@ -48,7 +49,6 @@ st.set_page_config(
     page_title=APP_TITLE,
     page_icon=APP_ICON,
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 st.markdown(styles.CSS, unsafe_allow_html=True)
 
@@ -75,6 +75,7 @@ def init_session():
     ss = st.session_state
     ss.setdefault("logged_in", True)
     ss.setdefault("undo_stack", [])
+    ss.setdefault("delete_undo_stack", [])
     ss.setdefault("flash_queue", [])
     ss.setdefault("daily_text_nonce", 0)      # لتدوير مفتاح text_area وتفريغه بأمان
     ss.setdefault("last_batch_signature", None)
@@ -298,14 +299,16 @@ def undo_last_batch() -> int:
     return removed
 
 
-def delete_records(mask: pd.Series) -> int:
-    """حذف سجلات محددة مع خصم مسافاتها من عدادات الدورة الحالية."""
+def delete_records(mask: pd.Series, record_undo: bool = True) -> int:
+    """حذف سجلات محددة مع خصم مسافاتها من عدادات الدورة الحالية، وحفظ
+    نقطة تراجع (رجوع) تستعيد السجلات المحذوفة وعدادات الزيت كما كانت."""
     df = st.session_state.fleet_data
     target = df[mask]
     if len(target) == 0:
         return 0
 
     mapping = state_map()
+    before_snapshot = {k: dict(v) for k, v in mapping.items()} if record_undo else None
     for _, row in target.iterrows():
         plate = str(row["رقم السيارة"]).strip()
         if plate not in mapping:
@@ -320,7 +323,31 @@ def delete_records(mask: pd.Series) -> int:
     STORAGE.save_records(keep)
     st.session_state.fleet_data = coerce_records(keep)
     save_state_map(mapping)
+
+    if record_undo:
+        st.session_state.delete_undo_stack.append({
+            "rows": target.to_dict("records"),
+            "state_before": before_snapshot,
+            "time": datetime.now().strftime("%H:%M:%S"),
+        })
     return len(target)
+
+
+def undo_last_delete() -> int:
+    """التراجع عن آخر عملية حذف (من أي صفحة) واستعادة السجلات وعدادات
+    الزيت كما كانت قبل الحذف مباشرة."""
+    if not st.session_state.delete_undo_stack:
+        return 0
+    entry = st.session_state.delete_undo_stack.pop()
+    rows = entry["rows"]
+    if not rows:
+        return 0
+    STORAGE.append_records(rows)
+    st.session_state.fleet_data = coerce_records(
+        pd.concat([st.session_state.fleet_data, pd.DataFrame(rows)],
+                  ignore_index=True))
+    save_state_map(entry["state_before"])
+    return len(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -406,19 +433,15 @@ if not st.session_state.logged_in:
 # ---------------------------------------------------------------------------
 # 8) الشريط الجانبي + شريط التنقل السفلي (الجوال) + حفظ آخر قسم مفتوح
 # ---------------------------------------------------------------------------
-SECTIONS = [
-    "📊 لوحة التحكم الرئيسية",
-    "📝 الحركة اليومية (قراءة الرسائل)",
-    "📋 السجل الشهري المجدول",
-    "📈 التحليلات والرسوم البيانية",
-    "📁 السجل العام (Excel / CSV)",
-    "⚙️ الإعدادات العامة والصيانة",
-]
-SECTION_ICONS = [s.split(" ", 1)[0] for s in SECTIONS]
-SECTION_SHORT = ["الرئيسية", "الحركة", "الشهري", "التحليلات", "الأرشيف", "الإعدادات"]
-SECTION_SLUGS = ["dashboard", "daily", "monthly", "analytics", "export", "settings"]
-SLUG_BY_SECTION = dict(zip(SECTIONS, SECTION_SLUGS))
-SECTION_BY_SLUG = dict(zip(SECTION_SLUGS, SECTIONS))
+# ---------------------------------------------------------------------------
+# 8) الشريط العائم الزجاجي الموحّد للتنقل (عمودي على اللابتوب / أفقي
+#    عائم أسفل الشاشة على الجوال) + حفظ آخر قسم مفتوح في رابط الصفحة
+# ---------------------------------------------------------------------------
+SECTION_META = {s["key"]: s for s in NAV_SECTIONS}
+SECTIONS = [s["title"] for s in NAV_SECTIONS]          # للتوافق مع PAGES{}
+SECTION_KEYS = [s["key"] for s in NAV_SECTIONS]
+SLUG_BY_SECTION = dict(zip(SECTIONS, SECTION_KEYS))
+SECTION_BY_SLUG = dict(zip(SECTION_KEYS, SECTIONS))
 
 
 def _read_section_from_url() -> str:
@@ -441,63 +464,46 @@ def _sync_query_param(new_section: str):
 
 
 def request_section(new_section: str):
-    """يُستخدم من شريط التنقل السفلي (خارج الشريط الجانبي) لطلب الانتقال
-    إلى قسم آخر. لا يُعدَّل مفتاح ودجت الراديو مباشرة هنا لأنه سبق إنشاؤه
-    في هذا التشغيل؛ بدلاً من ذلك تُحفظ الرغبة في `pending_section` وتُطبَّق
-    في بداية التشغيل التالي قبل إنشاء أي عنصر — وهذا يمنع تعارض حالة
-    الودجت الذي يسببه Streamlit عند تعديل مفتاح عنصر بعد إنشائه."""
-    st.session_state.pending_section = new_section
+    """طلب الانتقال إلى قسم آخر من الشريط العائم، مع تطبيقه فوراً في
+    session_state — الشريط العائم مكوَّن من أزرار عادية (وليس ودجت واحد
+    يحمل حالته الخاصة كالراديو القديم)، فلا تعارض حالة هنا، ويكفي
+    st.rerun() لإظهار القسم الجديد فوراً بلا أي طلب/استجابة إضافي."""
+    st.session_state.current_section = new_section
+    _sync_query_param(new_section)
 
 
 st.session_state.setdefault("current_section", _read_section_from_url())
 if st.session_state.current_section not in SECTIONS:
     st.session_state.current_section = SECTIONS[0]
-st.session_state.setdefault("sidebar_section_radio", st.session_state.current_section)
-
-# تطبيق أي طلب انتقال معلَّق (من الشريط السفلي) قبل إنشاء ودجت الراديو
-_pending = st.session_state.pop("pending_section", None)
-if _pending and _pending in SECTIONS:
-    st.session_state["sidebar_section_radio"] = _pending
-    st.session_state.current_section = _pending
-    _sync_query_param(_pending)
-
-with st.sidebar:
-    st.markdown(f"### {APP_ICON} {APP_TITLE}")
-    st.caption(ORG_NAME)
-    section = st.radio(
-        "الأقسام التشغيلية", SECTIONS, label_visibility="collapsed",
-        key="sidebar_section_radio",
-    )
-    st.divider()
-    st.caption("🟢 متصل بـ Google Sheets" if IS_CLOUD else "🟡 تخزين محلي")
-    st.caption(f"حد تغيير الزيت الحالي: **{OIL_LIMIT:,.0f} كم**")
-    st.caption(f"إجمالي السجلات: **{len(st.session_state.fleet_data)}**")
-
-if section != st.session_state.current_section:
-    # المستخدم غيّر القسم مباشرة من الشريط الجانبي (اللابتوب)
-    st.session_state.current_section = section
-    _sync_query_param(section)
 
 render_flash()
 data = st.session_state.fleet_data
 
 
-def render_bottom_nav():
-    """شريط تنقل سفلي عائم (كبسولة زجاجية) — يظهر على الجوال فقط عبر CSS،
-    ويبقى الشريط الجانبي الكامل هو واجهة التنقل على اللابتوب/الكمبيوتر."""
+def render_floating_nav():
+    """الشريط العائم الزجاجي الموحّد: عمود رأسي على حافة الشاشة في
+    اللابتوب، وكبسولة أفقية أسفل الشاشة في الجوال — بنفس هذا المكوّن
+    البرمجي الواحد، والفرق البصري بينهما كله عبر media queries في CSS.
+    الأيقونات من Material Symbols المدمجة في ستريملت (currentColor)
+    فتتكيف تلقائياً بين الوضعين الليلي والنهاري دون أي كود إضافي."""
     current = st.session_state.current_section
-    with st.container(key="bottom_nav"):
-        cols = st.columns(len(SECTIONS))
-        for i, (col, sec, icon, short) in enumerate(
-                zip(cols, SECTIONS, SECTION_ICONS, SECTION_SHORT)):
+    active_index = SECTIONS.index(current) if current in SECTIONS else 0
+    st.markdown(styles.nav_indicator_css(active_index, len(SECTIONS)),
+                unsafe_allow_html=True)
+    with st.container(key="floating_nav"):
+        cols = st.columns(len(NAV_SECTIONS))
+        for i, (col, meta) in enumerate(zip(cols, NAV_SECTIONS)):
+            sec_title = meta["title"]
             with col:
-                if st.button(icon, key=f"bn_{i}", help=sec):
-                    request_section(sec)
+                if st.button("", icon=f':material/{meta["icon"]}:',
+                             key=f"nav_{meta['key']}", help=sec_title,
+                             type="tertiary"):
+                    request_section(sec_title)
                     st.rerun()
-                st.caption(("● " if sec == current else "") + short)
+                st.caption(meta["short"])
 
 
-render_bottom_nav()
+render_floating_nav()
 
 
 # ---------------------------------------------------------------------------
@@ -505,9 +511,12 @@ render_bottom_nav()
 # ---------------------------------------------------------------------------
 def page_dashboard():
     st.markdown(styles.header(
-        "📊 لوحة التحكم الرئيسية",
-        f"متابعة حية لحالة الأسطول وعدادات الزيت — {TODAY}"),
+        SECTION_META["dashboard"]["title"],
+        f'{SECTION_META["dashboard"]["subtitle"]} — {TODAY}'),
         unsafe_allow_html=True)
+    status = "🟢 متصل بـ Google Sheets" if IS_CLOUD else "🟡 تخزين محلي"
+    st.caption(f"{status} · حد تغيير الزيت الحالي: {OIL_LIMIT:,.0f} كم · "
+               f"إجمالي السجلات: {len(st.session_state.fleet_data)}")
 
     overview = fleet_overview()
     today_rows = data[data["التاريخ"] == TODAY] if len(data) else empty_records_df()
@@ -593,8 +602,7 @@ SAMPLE = """التاريخ: {today}
 
 def page_daily():
     st.markdown(styles.header(
-        "📝 الحركة اليومية (قراءة الرسائل)",
-        "الصق تقارير السائقين كما هي وسيقوم النظام بتحليلها آلياً"),
+        SECTION_META["daily"]["title"], SECTION_META["daily"]["subtitle"]),
         unsafe_allow_html=True)
 
     c1, c2 = st.columns([1, 1])
@@ -716,8 +724,7 @@ def page_daily():
 # ---------------------------------------------------------------------------
 def page_monthly():
     st.markdown(styles.header(
-        "📋 السجل الشهري المجدول",
-        "تجميع أوتوماتيكي لمسافات وزفات كل شاحنة"),
+        SECTION_META["monthly"]["title"], SECTION_META["monthly"]["subtitle"]),
         unsafe_allow_html=True)
 
     if len(data) == 0:
@@ -792,8 +799,7 @@ def page_monthly():
 # ---------------------------------------------------------------------------
 def page_analytics():
     st.markdown(styles.header(
-        "📈 التحليلات والرسوم البيانية",
-        "رسوم بيانية مبنية بالكامل على البيانات الفعلية المسجَّلة في النظام"),
+        SECTION_META["analytics"]["title"], SECTION_META["analytics"]["subtitle"]),
         unsafe_allow_html=True)
 
     if len(data) == 0:
@@ -864,9 +870,22 @@ def page_analytics():
 # ---------------------------------------------------------------------------
 def page_export():
     st.markdown(styles.header(
-        "📁 السجل العام (Excel / CSV)",
-        "أرشيف كامل لكل سجلات الأسطول مع إمكانية التصفية والتنزيل"),
+        SECTION_META["export"]["title"], SECTION_META["export"]["subtitle"]),
         unsafe_allow_html=True)
+
+    # زر التراجع عن آخر حذف يُعرض دائماً بصرف النظر عن وجود بيانات حالياً في
+    # الجدول — فلو حُذفت كل السجلات (الجدول فارغ الآن) يجب أن يبقى بالإمكان
+    # استرجاعها، ولا يصح أن يختفي الزر مع اختفاء الجدول نفسه.
+    u1, u2 = st.columns([3, 1])
+    with u1:
+        st.caption("يمكنك حذف أي صف مباشرة من علامة 🗑️ آخر كل سطر في الجدول")
+    with u2:
+        if st.button("↩️ تراجع عن آخر حذف", width="stretch",
+                     disabled=not st.session_state.delete_undo_stack):
+            restored = undo_last_delete()
+            if restored:
+                flash("success", f"تم استرجاع {restored} سجل محذوف بنجاح.")
+                st.rerun()
 
     if len(data) == 0:
         st.info("لا توجد بيانات للتصدير.")
@@ -887,10 +906,38 @@ def page_export():
         subset = subset[subset["رقم السيارة"] == plate]
     subset = subset[(subset["التاريخ"] >= start.isoformat()) &
                     (subset["التاريخ"] <= end.isoformat())]
+    subset = subset.sort_values("التاريخ")
 
-    st.caption(f"عدد السجلات المطابقة: **{len(subset)}** — "
-               f"إجمالي المسافة: **{subset['المسافة المقطوعة (كم)'].sum():,.0f} كم**")
-    show_table(subset.sort_values("التاريخ"), BASE_COLUMNS)
+    st.caption(f"عدد السجلات المطابقة: {len(subset)} — "
+               f"إجمالي المسافة: {subset['المسافة المقطوعة (كم)'].sum():,.0f} كم")
+
+    visible_columns = st.multiselect(
+        "الأعمدة الظاهرة في الجدول", BASE_COLUMNS, default=BASE_COLUMNS,
+        key="export_visible_columns",
+        help="خصّص هيكل الجدول باختيار الحقول التي تريد عرضها فقط")
+    ordered_columns = [c for c in BASE_COLUMNS if c in visible_columns] or BASE_COLUMNS
+
+    if len(subset) == 0:
+        st.info("لا توجد سجلات مطابقة لعرضها.")
+    else:
+        editable = styles.safe_table(subset[BASE_COLUMNS + ["معرف السجل"]])
+        edited = st.data_editor(
+            editable,
+            column_order=ordered_columns,
+            disabled=True,                 # قراءة فقط لقيم الخلايا؛ الحذف فقط مسموح
+            num_rows="delete",
+            hide_index=True,
+            width="stretch",
+            key="records_editor",
+        )
+        if len(edited) < len(editable):
+            remaining_ids = set(edited["معرف السجل"].astype(str))
+            removed_ids = set(editable["معرف السجل"].astype(str)) - remaining_ids
+            if removed_ids:
+                mask = data["معرف السجل"].astype(str).isin(removed_ids)
+                removed = delete_records(mask)
+                flash("success", f"تم حذف {removed} سجل، ويمكنك التراجع عنه في أي وقت.")
+                st.rerun()
 
     d1, d2 = st.columns(2)
     with d1:
@@ -935,8 +982,7 @@ def page_export():
 # ---------------------------------------------------------------------------
 def page_settings():
     st.markdown(styles.header(
-        "⚙️ الإعدادات العامة والصيانة",
-        "التحكم بحد الزيت، الثيم، البيانات، والجلسة"),
+        SECTION_META["settings"]["title"], SECTION_META["settings"]["subtitle"]),
         unsafe_allow_html=True)
 
     # --- إعدادات الزيت ----------------------------------------------------
@@ -1084,6 +1130,6 @@ PAGES = {
     SECTIONS[4]: page_export,
     SECTIONS[5]: page_settings,
 }
-PAGES[section]()
+PAGES[st.session_state.current_section]()
 
 st.caption(f"{APP_ICON} {ORG_NAME} — الإصدار {APP_VERSION}")
