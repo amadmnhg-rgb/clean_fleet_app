@@ -71,6 +71,22 @@ STORAGE, STORAGE_MSG, IS_CLOUD = get_storage()
 # ---------------------------------------------------------------------------
 # 3) نظام الجلسات (Session State)
 # ---------------------------------------------------------------------------
+def _safe_load(loader, fallback, label: str):
+    """يحمي عملية القراءة الأولى من التخزين (خصوصاً Google Sheets) من أي
+    عطل عابر عند بدء التشغيل — شبكة بطيئة، تهيئة باردة على Streamlit
+    Cloud، أو تجاوز حصة الاستدعاءات. بدل أن ينهار التطبيق بشاشة حمراء
+    فور فتحه دون أي فعل من المستخدم، يعرض تنبيهاً هادئاً ويكمل بقيم
+    افتراضية آمنة؛ زر «تحديث البيانات» في الإعدادات يعيد المحاولة لاحقاً."""
+    try:
+        return loader()
+    except Exception as exc:  # noqa: BLE001
+        st.session_state.setdefault("startup_warnings", [])
+        st.session_state.startup_warnings.append(
+            f"تعذّر تحميل {label} عند بدء التشغيل ({exc}). تم المتابعة "
+            "ببيانات فارغة مؤقتاً — جرّب زر «تحديث البيانات» من الإعدادات.")
+        return fallback
+
+
 def init_session():
     ss = st.session_state
     ss.setdefault("logged_in", True)
@@ -83,20 +99,29 @@ def init_session():
     ss.setdefault("is_saving", False)
 
     if "settings" not in ss:
-        saved = STORAGE.load_settings()
+        saved = _safe_load(STORAGE.load_settings, {}, "الإعدادات")
         ss.settings = {
             "oil_limit": float(saved.get("oil_limit", DEFAULT_OIL_LIMIT)),
             "oil_factor": float(saved.get("oil_factor", DEFAULT_OIL_FACTOR)),
         }
     if "fleet_data" not in ss:
-        ss.fleet_data = STORAGE.load_records()
+        ss.fleet_data = _safe_load(STORAGE.load_records, empty_records_df(),
+                                   "سجلات الأسطول")
     if "oil_state" not in ss:
-        ss.oil_state = STORAGE.load_oil_state()
+        ss.oil_state = _safe_load(
+            STORAGE.load_oil_state, pd.DataFrame(columns=OIL_STATE_COLUMNS),
+            "بيانات دورات الزيت")
 
 
 def reload_from_storage():
-    st.session_state.fleet_data = STORAGE.load_records()
-    st.session_state.oil_state = STORAGE.load_oil_state()
+    try:
+        st.session_state.fleet_data = STORAGE.load_records()
+        st.session_state.oil_state = STORAGE.load_oil_state()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        flash("error", f"تعذّر تحديث البيانات من قاعدة البيانات ({exc}). "
+                       "لم يتغيّر أي شيء — حاول مرة أخرى.")
+        return False
 
 
 init_session()
@@ -404,6 +429,12 @@ def render_flash():
         getattr(st, kind)(text)
     st.session_state.flash_queue = []
 
+    # تحذيرات فشل التحميل الأولي عند بدء التشغيل (Google Sheets متعذّر
+    # الوصول إليه مؤقتاً مثلاً) — تُعرض مرة واحدة فقط ثم تُمسح.
+    for warning_text in st.session_state.get("startup_warnings") or []:
+        st.warning(f"⚠️ {warning_text}")
+    st.session_state.startup_warnings = []
+
 
 # ---------------------------------------------------------------------------
 # 7) شاشة القفل
@@ -495,8 +526,12 @@ def render_floating_nav():
         for i, (col, meta) in enumerate(zip(cols, NAV_SECTIONS)):
             sec_title = meta["title"]
             with col:
+                # لا نستخدم help= هنا عمداً: طبقة التلميح في بعض إصدارات
+                # ستريملت قد تتموضع خطأً داخل حاوية ذات position:fixed
+                # وتحجب الزر الذي تحته. التسمية الدائمة الظاهرة تحت كل
+                # أيقونة (سطر st.caption أدناه) تغني تماماً عن أي تلميح.
                 if st.button("", icon=f':material/{meta["icon"]}:',
-                             key=f"nav_{meta['key']}", help=sec_title,
+                             key=f"nav_{meta['key']}",
                              type="tertiary"):
                     request_section(sec_title)
                     st.rerun()
@@ -534,11 +569,7 @@ def page_dashboard():
         ("🚚", moving_today, "الشاحنات المتحركة اليوم", "ok"),
         ("🚛", total_fleet, "إجمالي الأسطول", "ok"),
     ]
-    cols = st.columns(len(cards))
-    for col, (icon, value, label, tone) in zip(cols, cards):
-        with col:
-            st.markdown(styles.stat_card(icon, value, label, tone),
-                        unsafe_allow_html=True)
+    st.markdown(styles.stat_grid(cards), unsafe_allow_html=True)
 
     # تنبيهات بلوغ الحد
     if len(overview):
