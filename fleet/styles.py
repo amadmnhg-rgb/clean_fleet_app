@@ -61,8 +61,11 @@ input, textarea, select, button, .stButton button {
    بداية الصفحة كطلب "تحديث" من المتصفح فيقطع عمل المستخدم. هذا يمنعه
    ويمنحنا سلوك تطبيق أصلي حقيقي دون التأثير على التمرير الطبيعي داخل
    الجداول أو الصفحة نفسها. */
-html, body, .stApp {
-    overscroll-behavior-y: contain;
+html, body, .stApp,
+[data-testid="stAppViewContainer"],
+.main {
+    overscroll-behavior: none !important;
+    overscroll-behavior-y: none !important;
     touch-action: pan-x pan-y;
 }
 
@@ -278,6 +281,9 @@ div[data-baseweb="tooltip"],
     background: transparent !important;
     box-shadow: none !important;
     color: var(--text-color) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
 }
 .st-key-floating_nav .stButton button span,
 .st-key-floating_nav .stButton button p,
@@ -287,10 +293,8 @@ div[data-baseweb="tooltip"],
     transition: opacity .25s ease, transform .25s ease;
 }
 .st-key-floating_nav .stButton button:hover span { opacity: 1; transform: scale(1.08); }
-.st-key-floating_nav [data-testid="stCaptionContainer"] p {
-    opacity: .68;
-    transition: opacity .25s ease;
-}
+/* أيقونات فقط بلا أي تسمية نصية أسفلها — إخفاء تام ومقصود */
+.st-key-floating_nav [data-testid="stCaptionContainer"] { display: none !important; }
 
 /* الجوال: كبسولة أفقية أسفل الشاشة */
 @media (max-width: 768px) {
@@ -327,13 +331,14 @@ div[data-baseweb="tooltip"],
     .st-key-floating_nav .stButton { margin: 0; }
     .st-key-floating_nav .stButton button {
         border-radius: 999px !important;
-        font-size: 1.2rem !important;
+        font-size: 1.25rem !important;
         line-height: 1;
-        padding: 8px 2px 2px !important;
+        padding: 10px !important;
         width: 100% !important;
+        aspect-ratio: 1 / 1;
+        max-width: 46px;
+        margin: 0 auto !important;
     }
-    .st-key-floating_nav [data-testid="stCaptionContainer"] { text-align: center; margin-top: -8px; }
-    .st-key-floating_nav [data-testid="stCaptionContainer"] p { font-size: .6rem !important; }
     /* المؤشر المتحرك: دائرة شفافة تنزلق أفقياً خلف الأيقونة النشطة.
        الحاوية RTL فتُبنى الأعمدة من اليمين، لذا التموضع من اليمين
        والانزلاق باتجاه سالب مع تزايد رقم القسم. */
@@ -353,19 +358,19 @@ div[data-baseweb="tooltip"],
 
 /* اللابتوب: عمود رأسي عائم على حافة الشاشة */
 @media (min-width: 769px) {
-    .block-container { padding-inline-end: 98px !important; }
+    .block-container { padding-inline-end: 90px !important; }
     .st-key-floating_nav {
         display: block !important;
         top: 50%;
         right: 18px;
         transform: translateY(-50%);
-        border-radius: 26px;
-        padding: 14px 6px;
-        width: 78px;
+        border-radius: 999px;
+        padding: 14px 10px;
+        width: 66px;
     }
     .st-key-floating_nav [data-testid="stVerticalBlockBorderWrapper"],
     .st-key-floating_nav [data-testid="stVerticalBlock"] {
-        gap: .55rem !important;
+        gap: .6rem !important;
         position: relative;
         z-index: 1;
     }
@@ -376,8 +381,9 @@ div[data-baseweb="tooltip"],
     .st-key-floating_nav [data-testid="stHorizontalBlock"] {
         flex-direction: column !important;
         flex-wrap: nowrap !important;
-        gap: .55rem !important;
+        gap: .6rem !important;
         align-items: center;
+        justify-content: center;
         position: relative;
         z-index: 1;
     }
@@ -385,34 +391,23 @@ div[data-baseweb="tooltip"],
         width: 100% !important;
         min-width: 0 !important;
         flex: 0 0 auto !important;
+        display: flex !important;
+        justify-content: center !important;
     }
     .st-key-floating_nav .stButton button {
         border-radius: 999px !important;
         font-size: 1.3rem !important;
         padding: 8px !important;
-        width: 44px !important;
-        height: 44px !important;
+        width: 46px !important;
+        height: 46px !important;
         margin: 0 auto !important;
-    }
-    /* تسمية دائمة صغيرة تحت كل أيقونة بدل الاعتماد على تلميح التحويم —
-       أوضح وأكثر أماناً من أي طبقة تلميح قد تتموضع خطأً وتحجب الزر. */
-    .st-key-floating_nav [data-testid="stCaptionContainer"] {
-        display: block !important;
-        text-align: center;
-        line-height: 1.05;
-        margin-top: -2px;
-        padding: 0 2px;
-    }
-    .st-key-floating_nav [data-testid="stCaptionContainer"] p {
-        font-size: 8.5px !important;
-        white-space: normal;
     }
     /* المؤشر المتحرك: دائرة شفافة تنزلق رأسياً خلف الأيقونة النشطة */
     .st-key-floating_nav::before {
         content: "";
         position: absolute;
-        right: 6px; left: 6px;
-        height: calc((100% - 16px) / var(--nav-count, 6));
+        right: 10px; left: 10px;
+        height: calc((100% - 20px) / var(--nav-count, 6));
         top: 14px;
         background: color-mix(in srgb, var(--primary-color, #1f6feb) 30%, transparent);
         border: 1px solid color-mix(in srgb, var(--primary-color, #1f6feb) 45%, transparent);
