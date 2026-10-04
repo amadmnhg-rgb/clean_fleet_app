@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import time
 import uuid
@@ -54,18 +55,50 @@ st.markdown(styles.CSS, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
-# 2) طبقة التخزين (Google Sheets تلقائياً مع تخزين محلي احتياطي)
+# 2) طبقة التخزين — Google Sheets إلزامياً في الإنتاج (لا تخزين محلي صامت)
 # ---------------------------------------------------------------------------
-@st.cache_resource(show_spinner="جارٍ تهيئة قاعدة البيانات…")
+# التخزين المحلي (CSV) يبقى مفيداً فقط للتطوير/الاختبار على الجهاز المحلي
+# دون بيانات اعتماد Google — لهذا لا نحذفه من storage.py. لكن على الخادم
+# الفعلي (Streamlit Cloud) لا نسمح إطلاقاً بأن يعمل التطبيق صامتاً على
+# تخزين محلي مؤقت يختفي عند أي Reboot، لأن هذا بالضبط سبب فقدان البيانات.
+# متغيّر البيئة أدناه هو الاستثناء الوحيد، ويُفعَّل فقط من داخل مجموعة
+# الاختبارات الآلية (tests/test_app_ui.py) حيث لا توجد بيانات اعتماد حقيقية.
+_ALLOW_LOCAL_FALLBACK = os.environ.get("FLEET_ALLOW_LOCAL_STORAGE") == "1"
+
+
+@st.cache_resource(show_spinner="جارٍ الاتصال بـ Google Sheets…")
 def get_storage():
     try:
         secrets = dict(st.secrets)
     except Exception:  # noqa: BLE001
         secrets = {}
-    return build_storage(secrets)
+    return build_storage(secrets, allow_local_fallback=_ALLOW_LOCAL_FALLBACK)
 
 
 STORAGE, STORAGE_MSG, IS_CLOUD = get_storage()
+
+if not IS_CLOUD and not _ALLOW_LOCAL_FALLBACK:
+    st.error(
+        "🚫 تعذّر الاتصال بـ Google Sheets، وتم إيقاف التطبيق عمداً لحماية "
+        "بياناتك من الفقدان — لن يعمل التطبيق على تخزين محلي مؤقت يختفي "
+        "عند أي إعادة تشغيل للخادم.\n\n"
+        f"تفاصيل الخطأ: {STORAGE_MSG}\n\n"
+        "تحقّق من التالي في Streamlit Cloud ← Settings ← Secrets:\n"
+        "1. وجود قسم [gcp_service_account] كاملاً بكل حقوله "
+        "(project_id، private_key، client_email...).\n"
+        "2. أن private_key يحتوي أسطراً حقيقية (\\n) كما هي في ملف JSON "
+        "الأصلي، بلا حذف أو تعديل.\n"
+        "3. أن حساب الخدمة (client_email) له صلاحية Editor على جدول "
+        "البيانات — تلقائياً إن تُرك spreadsheet_id فارغاً، أو يدوياً إن "
+        "حدّدت جدولاً موجوداً مسبقاً.\n"
+        "4. وجود قسم [gsheets] (حتى لو بقيمة share_with فقط).")
+    # get_storage مُخزَّن بـ st.cache_resource، فحتى لو صحّحت الإعدادات
+    # الآن لن يُعاد الاتصال تلقائياً إلا بإعادة تشغيل الخادم بالكامل أو
+    # بإفراغ هذا التخزين المؤقت صراحةً — هذا الزر يفعل ذلك فوراً.
+    if st.button("🔄 إعادة المحاولة بعد تصحيح الإعدادات", type="primary"):
+        get_storage.clear()
+        st.rerun()
+    st.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +354,12 @@ def undo_last_batch() -> int:
     STORAGE.save_records(keep)
     st.session_state.fleet_data = coerce_records(keep)
     save_state_map(entry["state_before"])
+    # يجب مسح بصمة آخر دفعة محفوظة هنا: بدون هذا، أي محاولة لإعادة رفع
+    # نفس محتوى الرسائل مباشرة بعد التراجع كانت تُرفض بصمت باعتبارها
+    # "تكراراً" (نفس البصمة + نافذة زمنية قصيرة)، فيبقى العداد صفراً رغم
+    # أن المستخدم يحاول إعادة إدخال بيانات صحيحة وجديدة فعلياً.
+    st.session_state.last_batch_signature = None
+    st.session_state.last_batch_time = 0.0
     return removed
 
 
@@ -510,6 +549,17 @@ if st.session_state.current_section not in SECTIONS:
 render_flash()
 data = st.session_state.fleet_data
 
+if not IS_CLOUD:
+    # تحذير لا يمكن تفويته: بدون هذا كان يسهل الاعتقاد خطأً أن البيانات
+    # محفوظة في Google Sheets بينما هي فعلياً في ملف محلي مؤقت يُمحى مع
+    # أول إعادة تشغيل للخادم (Reboot) أو نوم التطبيق على Streamlit Cloud.
+    st.error(
+        "🔴 لم يتم الاتصال بـ Google Sheets — البيانات الحالية تُحفظ "
+        "مؤقتاً على الخادم فقط وستُفقد بالكامل عند أي إعادة تشغيل له. "
+        f"سبب التعذّر: {STORAGE_MSG} "
+        "راجع قسم «⚙️ الإعدادات» لمعرفة تفاصيل الاتصال، وتأكد من صحة "
+        "بيانات الاعتماد (gcp_service_account) في Secrets.")
+
 
 def render_floating_nav():
     """الشريط العائم الزجاجي الموحّد: عمود رأسي على حافة الشاشة في
@@ -554,7 +604,21 @@ def page_dashboard():
                f"إجمالي السجلات: {len(st.session_state.fleet_data)}")
 
     overview = fleet_overview()
-    today_rows = data[data["التاريخ"] == TODAY] if len(data) else empty_records_df()
+
+    # تاريخ مؤشرَي «مسافة اليوم» و«الشاحنات المتحركة»: افتراضياً اليوم
+    # الفعلي (نفس السلوك القديم بالضبط)، لكن يمكن اختيار أي تاريخ آخر
+    # لمراجعة نشاط ذلك اليوم تحديداً. هذا يحل ظهور صفر عند إدخال بيانات
+    # ليوم غير اليوم الفعلي، أو عند مراجعة يوم سابق بعد التراجع.
+    dcol, _ = st.columns([1, 3])
+    with dcol:
+        st.session_state.setdefault("dashboard_date", date.today())
+        display_date = st.date_input(
+            "تاريخ المؤشرات اليومية",
+            format="YYYY-MM-DD", key="dashboard_date")
+    display_date_str = display_date.isoformat()
+    day_word = "اليوم" if display_date_str == TODAY else display_date_str
+
+    today_rows = data[data["التاريخ"] == display_date_str] if len(data) else empty_records_df()
 
     over_limit = int((overview["الحالة"] == "بلغت الحد").sum()) if len(overview) else 0
     near_limit = int((overview["الحالة"] == "قريبة من الحد").sum()) if len(overview) else 0
@@ -565,8 +629,8 @@ def page_dashboard():
     cards = [
         ("🛢️", over_limit, "سيارات بلغت حد الزيت", "danger"),
         ("⚠️", near_limit, "تحتاج صيانة قريباً", "warning"),
-        ("🛣️", f"{today_km:,.0f}", "إجمالي مسافة اليوم (كم)", "ok"),
-        ("🚚", moving_today, "الشاحنات المتحركة اليوم", "ok"),
+        ("🛣️", f"{today_km:,.0f}", f"إجمالي مسافة {day_word} (كم)", "ok"),
+        ("🚚", moving_today, f"الشاحنات المتحركة {day_word}", "ok"),
         ("🚛", total_fleet, "إجمالي الأسطول", "ok"),
     ]
     st.markdown(styles.stat_grid(cards), unsafe_allow_html=True)
@@ -615,7 +679,7 @@ def page_dashboard():
     else:
         st.info("لا توجد سيارات مسجلة بعد. ابدأ من قسم «الحركة اليومية».")
 
-    st.subheader("📄 السجلات الحية لليوم")
+    st.subheader(f"📄 السجلات الحية لـ {day_word}")
     show_table(today_rows, BASE_COLUMNS)
 
 
@@ -640,6 +704,13 @@ def page_daily():
     with c1:
         entry_date = st.date_input("تاريخ الحركة", value=date.today(),
                                    format="YYYY-MM-DD")
+        # مزامنة فورية ومستمرة (وليس فقط بعد الحفظ): مؤشرا «مسافة اليوم»
+        # و«الشاحنات المتحركة» في لوحة التحكم يتبعان هذا التاريخ تحديداً
+        # بمجرد تغييره هنا، حتى قبل الضغط على حفظ — هذا آمن برمجياً لأن
+        # ودجت dashboard_date لم يُنشأ إطلاقاً في هذا التشغيل (نحن في
+        # صفحة مختلفة)، فلا تعارض مع قيود Streamlit على تعديل حالة ودجت
+        # بعد إنشائه في نفس التشغيل.
+        st.session_state.dashboard_date = entry_date
     with c2:
         st.text_input("حد تغيير الزيت المعتمد حالياً (كم)",
                       value=f"{OIL_LIMIT:,.0f}", disabled=True)
@@ -697,6 +768,8 @@ def page_daily():
                         f"({alert['limit']:,.0f} كم) في الدورة رقم {alert['cycle']}. "
                         "توقف العداد عند الحد ولن يتجاوزه. اعتمد تغيير الزيت من "
                         "لوحة التحكم لتبدأ دورة جديدة من الصفر."))
+                # (مزامنة dashboard_date أصبحت تتم فور تغيير تاريخ الحركة
+                # أعلاه مباشرة، لا حاجة لتكرارها هنا بعد الحفظ تحديداً.)
                 # تفريغ الحقل بأمان: تدوير مفتاح الودجت بدل تعديل قيمته مباشرة
                 st.session_state.daily_text_nonce += 1
                 st.rerun()
@@ -743,6 +816,9 @@ def page_daily():
                 msg += (f" 🚨 السيارة {alert['plate']} بلغت حد الزيت "
                         f"({alert['limit']:,.0f} كم).")
             flash("success", msg)
+            # نفس مزامنة تاريخ لوحة التحكم المطبّقة على مسار تحليل
+            # الرسائل، حتى يعمل الإدخال اليدوي بالتناسق نفسه تماماً.
+            st.session_state.dashboard_date = manual_date
             st.rerun()
 
     st.divider()
