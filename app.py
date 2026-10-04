@@ -72,7 +72,7 @@ def get_storage():
         secrets = dict(st.secrets)
     except Exception:  # noqa: BLE001
         secrets = {}
-    return build_storage(secrets, allow_local_fallback=_ALLOW_LOCAL_FALLBACK)
+    return build_storage(secrets)
 
 
 STORAGE, STORAGE_MSG, IS_CLOUD = get_storage()
