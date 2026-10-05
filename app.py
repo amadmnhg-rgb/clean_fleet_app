@@ -15,7 +15,10 @@ st.set_page_config(
 )
 
 # تطبيق الأنماط المخصصة (CSS)
-styles.apply_custom_css()
+if hasattr(styles, "apply_custom_css"):
+    styles.apply_custom_css()
+elif hasattr(styles, "apply_css"):
+    styles.apply_css()
 
 # ---------------------------------------------------------------------------
 # 2) الثوابت والبيانات التعريفية للأقسام
