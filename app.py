@@ -1,10 +1,8 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
-import styles
-import util
-import storage as STORAGE
-import analytics
+from fleet import styles, util, analytics
+import fleet.storage as STORAGE
 
 # ---------------------------------------------------------------------------
 # 1) التهيئة العامة وإعدادات الصفحة
