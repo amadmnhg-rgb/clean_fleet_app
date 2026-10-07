@@ -9,6 +9,7 @@
 """
 
 import pandas as pd
+import streamlit as st
 
 from . import util
 
@@ -454,6 +455,11 @@ footer {visibility: hidden;}
 """
 
 
+def apply_custom_css():
+    """تطبيق تنسيقات الـ CSS المخصصة للواجهة."""
+    st.markdown(CSS, unsafe_allow_html=True)
+
+
 # ---------------------------------------------------------------------------
 # عرض آمن للجداول (يمنع ظهور نقاط/رموز بدل القيم الحقيقية بسبب اختلاط الأنواع)
 # ---------------------------------------------------------------------------
@@ -476,18 +482,11 @@ FLOAT_COLUMNS = {
 def safe_table(df: "pd.DataFrame") -> "pd.DataFrame":
     """
     يفرض أنواع بيانات ثابتة لكل عمود قبل العرض في st.dataframe.
-
-    السبب: عمود من نوع object يحتوي أنواعاً مختلطة (نص/رقم/فارغ) قد لا يُحوَّل
-    بنجاح إلى صيغة Arrow، فتظهر بعض الخلايا كنقطة "•" أو رمز غير مفهوم بدل
-    القيمة الحقيقية (رقم السيارة أو عدد الزفات). هذه الدالة تضمن أن كل عمود
-    نصي يبقى نصاً صريحاً، وكل عمود رقمي يتحول لرقم صريح، بلا أي تغيير للقيم.
     """
     if df is None or len(df) == 0:
         return df
     df = df.copy()
     if "رقم السيارة" in df.columns:
-        # يحوَّل لعدد صحيح متى أمكن (الحالة الغالبة) ليُرتَّب عددياً
-        # تصاعدياً (1، 2، 13، 14) بدل الترتيب الأبجدي (1، 13، 14، 2).
         df = util.numeric_plate_column(df, "رقم السيارة")
     for col in df.columns:
         if col == "رقم السيارة":
@@ -500,16 +499,13 @@ def safe_table(df: "pd.DataFrame") -> "pd.DataFrame":
         elif col in FLOAT_COLUMNS:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0).astype("float64")
         elif df[col].dtype == object:
-            # أي عمود آخر غير مصنّف: تثبيته كنص لتفادي فشل تحويل Arrow
             df[col] = df[col].astype(str).replace(
                 {"nan": "", "None": "", "NaT": "", "<NA>": ""})
     return df
 
 
 def nav_indicator_css(index: int, count: int) -> str:
-    """تحديد موضع المؤشر الدائري المتحرك في الشريط العائم لهذا التشغيل —
-    يُبنى كقاعدة CSS خارجية بدل style مضمّن لأن حاوية st.container(key=...)
-    لا تقبل تمرير سمات style مباشرة من بايثون."""
+    """تحديد موضع المؤشر الدائري المتحرك في الشريط العائم لهذا التشغيل."""
     return (
         f'<style>.st-key-floating_nav {{ '
         f'--nav-index: {index}; --nav-count: {count}; }}</style>'
@@ -529,10 +525,7 @@ def stat_card(icon: str, value, label: str, tone: str = "ok") -> str:
 
 
 def stat_grid(cards) -> str:
-    """يبني شبكة CSS Grid حقيقية ومتجاوبة لبطاقات المؤشرات — مستقلة تماماً
-    عن أعمدة ستريملت (st.columns) لتفادي أي تكدّس أو تعارض بينها: صف واحد
-    من 5 بطاقات في اللابتوب، بطاقتان بالصف في الجوال، بطاقة واحدة فقط في
-    الشاشات الصغيرة جداً. ``cards`` قائمة عناصر (icon, value, label, tone)."""
+    """يبني شبكة CSS Grid حقيقية ومتجاوبة لبطاقات المؤشرات."""
     items = "".join(
         stat_card(icon, value, label, tone) for icon, value, label, tone in cards)
     return f'<div class="stat-grid">{items}</div>'
