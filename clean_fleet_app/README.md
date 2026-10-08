@@ -67,15 +67,20 @@ clean_fleet_app/
 ├── fleet/                 # الحزم الداخلية
 │   ├── analytics.py       # التحليلات والرسوم
 │   ├── config.py          # الإعدادات والثوابت
+│   ├── logger.py          # نظام تسجيل الأحداث
 │   ├── oil.py             # محرك حساب عداد الزيت
 │   ├── parser.py          # استخلاص الرسائل
 │   ├── storage.py         # طبقة التخزين
 │   ├── styles.py          # التنسيقات البصرية
-│   └── util.py            # الأدوات المساعدة
+│   ├── util.py            # الأدوات المساعدة
+│   └── validation.py      # التحقق من صحة البيانات
 ├── tests/                 # الاختبارات
 ├── .streamlit/            # إعدادات Streamlit
 │   ├── config.toml
 │   └── secrets.toml.example
+├── README.md              # هذا الملف
+├── BEST_PRACTICES.md      # دليل أفضل الممارسات للمطورين
+├── USER_GUIDE.md          # دليل المستخدم النهائي
 └── requirements.txt        # المكتبات المطلوبة
 ```
 

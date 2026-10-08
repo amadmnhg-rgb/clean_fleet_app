@@ -42,6 +42,7 @@ from fleet.oil import (
 )
 from fleet.parser import parse_daily_fleet_messages
 from fleet.storage import build_storage, coerce_records, empty_records_df
+from fleet.validation import validate_record, sanitize_text
 
 # ---------------------------------------------------------------------------
 # 1) إعدادات الصفحة والبيئة
@@ -289,9 +290,15 @@ def add_batch(rows: list, dedup: bool = False) -> dict:
         mapping = state_map()
         before_snapshot = {k: dict(v) for k, v in mapping.items()}
         batch_id = uuid.uuid4().hex[:10]
-        prepared, alerts = [], []
+        prepared, alerts, validation_errors = [], [], []
 
         for row in rows:
+            # التحقق من صحة البيانات قبل الحفظ
+            is_valid, errors = validate_record(row)
+            if not is_valid:
+                validation_errors.append(f"السيارة {row.get('رقم السيارة', 'غير معروف')}: {', '.join(errors)}")
+                continue
+
             plate = str(row["رقم السيارة"]).strip()
             state = ensure_state(mapping, plate)
             limit = float(state["حد تغيير الزيت"] or OIL_LIMIT)
@@ -306,9 +313,9 @@ def add_batch(rows: list, dedup: bool = False) -> dict:
                 "التاريخ": row.get("التاريخ", TODAY),
                 "رقم السيارة": plate,
                 "عدد الزفات": int(row.get("عدد الزفات", 0)),
-                "تفاصيل الزفات": row.get("تفاصيل الزفات", "غير محدد"),
+                "تفاصيل الزفات": sanitize_text(row.get("تفاصيل الزفات", "غير محدد")),
                 "المسافة المقطوعة (كم)": float(row.get("المسافة المقطوعة (كم)", 0)),
-                "الوقت المستغرق": row.get("الوقت المستغرق", "غير محدد"),
+                "الوقت المستغرق": sanitize_text(row.get("الوقت المستغرق", "غير محدد")),
                 "عداد الزيت الحالي": counter,
                 "حد تغيير الزيت": limit,
                 "دورة الزيت": int(state["دورة الزيت"]),
@@ -323,6 +330,14 @@ def add_batch(rows: list, dedup: bool = False) -> dict:
                     "cycle": int(state["دورة الزيت"]),
                     "dropped": dropped,
                 })
+
+        # إذا كان هناك أخطاء تحقق، نعود رسالة للمستخدم
+        if validation_errors and not prepared:
+            return {"added": 0, "alerts": [], "duplicate": False,
+                    "error": f"جميع السجلات تحتوي على أخطاء: {'; '.join(validation_errors[:3])}"}
+        elif validation_errors:
+            # نكمل حفظ السجلات الصحيحة فقط ونحذر المستخدم
+            st.warning(f"تم تجاهل {len(validation_errors)} سجل بسبب أخطاء في البيانات.")
 
         try:
             STORAGE.append_records(prepared)
@@ -347,7 +362,7 @@ def add_batch(rows: list, dedup: bool = False) -> dict:
             ss.last_batch_time = time.time()
 
         return {"added": len(prepared), "alerts": alerts, "batch_id": batch_id,
-                "duplicate": False, "error": None}
+                "duplicate": False, "error": None, "validation_errors": validation_errors}
     finally:
         if dedup:
             ss.is_saving = False
@@ -1028,8 +1043,10 @@ def page_export():
     subset = data.copy()
     if plate != "الكل":
         subset = subset[subset["رقم السيارة"] == plate]
-    subset = subset[(subset["التاريخ"] >= start.isoformat()) &
-                    (subset["التاريخ"] <= end.isoformat())]
+    # تحسين: استخدام query() أسرع من الفلترة المباشرة
+    subset = subset.query(
+        f"`التاريخ` >= '{start.isoformat()}' and `التاريخ` <= '{end.isoformat()}'"
+    )
     subset = subset.sort_values("التاريخ")
 
     st.caption(f"عدد السجلات المطابقة: {len(subset)} — "

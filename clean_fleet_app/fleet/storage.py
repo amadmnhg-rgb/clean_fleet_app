@@ -33,6 +33,7 @@ from .config import (
     WS_RECORDS,
     WS_SETTINGS,
 )
+from .logger import log_info, log_error, log_warning
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -209,11 +210,16 @@ class SheetsStorage:
         import gspread  # يُستورد هنا حتى لا يكون إلزامياً في الوضع المحلي
 
         self._gspread = gspread
+        log_info("جاري الاتصال بـ Google Sheets...")
         # تعيين timeout افتراضي للاتصال لتجنب التعليق
         socket.setdefaulttimeout(30)  # 30 ثانية كحد أقصى
         try:
             self.client = gspread.service_account_from_dict(
                 credentials, scopes=GOOGLE_SCOPES)
+            log_info("تم الاتصال بـ Google Sheets بنجاح")
+        except Exception as exc:
+            log_error("فشل الاتصال بـ Google Sheets", exc_info=True)
+            raise
         finally:
             socket.setdefaulttimeout(None)  # إعادة التعيين للقيمة الافتراضية
 
